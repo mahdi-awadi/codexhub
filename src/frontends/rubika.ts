@@ -240,15 +240,26 @@ export class RubikaFrontend {
   // Tell Rubika where to POST updates. Idempotent — safe to call on each
   // daemon boot. Logs but does not throw on failure so a temporarily
   // unreachable Rubika doesn't block daemon startup.
+  //
+  // Webhook vs continuous polling: Rubika does not enforce mutual exclusion
+  // between webhook delivery and getUpdates polling (Telegram does — Rubika
+  // does not). Running both ships every inbound message twice. So we treat
+  // them as alternates: when webhook registration succeeds, the setInterval
+  // is NOT started; the bootstrap drain still runs to clear messages that
+  // arrived during downtime. When webhookBase is unset OR registration fails,
+  // we fall back to continuous polling.
   async start(): Promise<void> {
     if (this.started) return
     this.started = true
+
+    let webhookActive = false
     if (this.deps.webhookBase) {
       const base = this.deps.webhookBase.replace(/\/$/, '')
       const updateUrl = `${base}${this.webhookPath}`
       const inlineUrl = `${base}${this.inlineWebhookPath}`
-      await this.registerEndpoint('ReceiveUpdate', updateUrl)
-      await this.registerEndpoint('ReceiveInlineMessage', inlineUrl)
+      const a = await this.registerEndpoint('ReceiveUpdate', updateUrl)
+      const b = await this.registerEndpoint('ReceiveInlineMessage', inlineUrl)
+      webhookActive = a && b
     } else {
       process.stderr.write('rubika: rubikaWebhookBase not configured — webhooks NOT registered\n')
     }
@@ -290,8 +301,19 @@ export class RubikaFrontend {
       } catch (err) {
         process.stderr.write(`rubika: bootstrap getUpdates failed (will retry on first poll): ${err}\n`)
       }
-      this.pollTimer = setInterval(() => { this.pollOnce().catch(() => {}) }, this.pollingIntervalMs)
+      if (webhookActive) {
+        process.stderr.write('rubika: webhook registered — continuous polling disabled (webhook owns intake)\n')
+      } else {
+        this.pollTimer = setInterval(() => { this.pollOnce().catch(() => {}) }, this.pollingIntervalMs)
+        process.stderr.write(`rubika: no webhook — continuous polling every ${this.pollingIntervalMs}ms\n`)
+      }
     }
+  }
+
+  /** True iff the steady-state setInterval poll loop is scheduled. False when
+   * webhook is the active intake or polling is disabled. Public for tests. */
+  isContinuousPollingActive(): boolean {
+    return this.pollTimer !== null
   }
 
   private async sendRestartPrompt(senderId: string, list: RubikaUpdateBody[]): Promise<void> {
@@ -312,12 +334,14 @@ export class RubikaFrontend {
     ]])
   }
 
-  private async registerEndpoint(type: 'ReceiveUpdate' | 'ReceiveInlineMessage', url: string): Promise<void> {
+  private async registerEndpoint(type: 'ReceiveUpdate' | 'ReceiveInlineMessage', url: string): Promise<boolean> {
     try {
       await this.send('updateBotEndpoints', { type, url })
       process.stderr.write(`rubika: ${type} webhook registered → ${url}\n`)
+      return true
     } catch (err) {
       process.stderr.write(`rubika: failed to register ${type} (${err})\n`)
+      return false
     }
   }
 

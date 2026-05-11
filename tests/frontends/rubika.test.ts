@@ -2644,3 +2644,92 @@ describe('RubikaFrontend /invite, /unpin, claim flow', () => {
     expect(store.getPin('stranger-x')).toBeNull()
   })
 })
+
+// ── Webhook vs continuous polling mutual exclusion ───────────────────────────
+// Bug background: the daemon used to register a webhook with Rubika AND ALSO
+// run a 2-second getUpdates poll loop. Rubika is not telegram — it does not
+// treat the two as mutually exclusive, so every inbound message was processed
+// twice (once via webhook POST, once via the next poll batch). Claude saw each
+// user message twice and replied twice; the user got the same reply twice.
+//
+// Contract now: webhook AND continuous polling are mutually exclusive at the
+// daemon level. Webhook is preferred when registered; polling is the fallback.
+// The bootstrap drain is unrelated and runs unchanged.
+
+describe('RubikaFrontend.start — webhook vs continuous polling are mutually exclusive', () => {
+  test('with webhook successfully registered, continuous polling does NOT start', async () => {
+    const registry = new SessionRegistry({ defaultTrust: 'ask', defaultUploadDir: '.' })
+    const router = new StubRouter()
+    const sender = new FakeSender()
+    sender.reply = { updates: [], next_offset_id: '' }
+    const r = new RubikaFrontend({
+      token: 't',
+      allowFrom: ['u1'],
+      registry,
+      router: router as any,
+      webhookBase: 'https://hub.example',
+      sender: (m, b) => sender.send(m, b),
+      pollingIntervalMs: 1000,
+    })
+    await r.start()
+    expect(r.isContinuousPollingActive()).toBe(false)
+    await r.stop()
+  })
+
+  test('with webhook registration failing, continuous polling falls back', async () => {
+    const registry = new SessionRegistry({ defaultTrust: 'ask', defaultUploadDir: '.' })
+    const router = new StubRouter()
+    const sender = async (m: string, _b: unknown) => {
+      if (m === 'updateBotEndpoints') throw new Error('rubika down')
+      if (m === 'getUpdates') return { updates: [], next_offset_id: '' }
+      return { status: 'OK' }
+    }
+    const r = new RubikaFrontend({
+      token: 't',
+      allowFrom: ['u1'],
+      registry,
+      router: router as any,
+      webhookBase: 'https://hub.example',
+      sender,
+      pollingIntervalMs: 1000,
+    })
+    await r.start()
+    expect(r.isContinuousPollingActive()).toBe(true)
+    await r.stop()
+  })
+
+  test('with webhookBase unset, continuous polling runs as the only intake', async () => {
+    const registry = new SessionRegistry({ defaultTrust: 'ask', defaultUploadDir: '.' })
+    const router = new StubRouter()
+    const sender = new FakeSender()
+    sender.reply = { updates: [], next_offset_id: '' }
+    const r = new RubikaFrontend({
+      token: 't',
+      allowFrom: ['u1'],
+      registry,
+      router: router as any,
+      sender: (m, b) => sender.send(m, b),
+      pollingIntervalMs: 1000,
+    })
+    await r.start()
+    expect(r.isContinuousPollingActive()).toBe(true)
+    await r.stop()
+  })
+
+  test('with pollingIntervalMs=0, continuous polling never runs even when webhook is unconfigured', async () => {
+    const registry = new SessionRegistry({ defaultTrust: 'ask', defaultUploadDir: '.' })
+    const router = new StubRouter()
+    const sender = new FakeSender()
+    const r = new RubikaFrontend({
+      token: 't',
+      allowFrom: ['u1'],
+      registry,
+      router: router as any,
+      sender: (m, b) => sender.send(m, b),
+      pollingIntervalMs: 0,
+    })
+    await r.start()
+    expect(r.isContinuousPollingActive()).toBe(false)
+    await r.stop()
+  })
+})
