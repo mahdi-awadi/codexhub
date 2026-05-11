@@ -146,6 +146,42 @@ describe('SessionRegistry', () => {
     expect(entry.profileOverrides).toEqual({ facts: ['test fact'] })
   })
 
+  test('toSaveFormat preserves Codex thread metadata', () => {
+    const registry = new SessionRegistry({ defaultTrust: 'ask', defaultUploadDir: '.' })
+    registry.register('/repo:0', { name: 'repo', threadId: 'thread_1', lastTurnId: 'turn_1' })
+
+    const saved = registry.toSaveFormat()
+
+    expect(saved['/repo:0']).toMatchObject({
+      threadId: 'thread_1',
+      lastTurnId: 'turn_1',
+    })
+  })
+
+  test('restoreFrom preserves Codex thread metadata', () => {
+    const registry = new SessionRegistry({ defaultTrust: 'ask', defaultUploadDir: '.' })
+
+    registry.restoreFrom({
+      '/repo:0': {
+        name: 'repo',
+        trust: 'ask',
+        prefix: '',
+        uploadDir: '.',
+        managed: true,
+        teamIndex: 0,
+        teamSize: 0,
+        threadId: 'thread_1',
+        lastTurnId: 'turn_1',
+      },
+    })
+
+    expect(registry.get('/repo:0')).toMatchObject({
+      threadId: 'thread_1',
+      lastTurnId: 'turn_1',
+      status: 'disconnected',
+    })
+  })
+
   describe('rules & facts overrides', () => {
     const profile: import('../src/types').Profile = {
       name: 'careful',

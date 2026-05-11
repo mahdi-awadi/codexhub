@@ -72,6 +72,8 @@ export type SessionConfig = {
   appliedProfile?: string           // name of profile used at spawn
   profileOverrides?: ProfileOverrides // deltas from the profile
   autopilot?: Partial<AutopilotConfig>    // per-session settings (enabled, overrides of defaults)
+  threadId?: string                 // Codex App Server thread id
+  lastTurnId?: string               // last active Codex turn id, used for steering/recovery
 }
 
 export type SessionState = SessionConfig & {

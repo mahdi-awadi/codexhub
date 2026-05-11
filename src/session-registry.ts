@@ -57,6 +57,8 @@ export class SessionRegistry {
       teamSize: overrides?.teamSize ?? 0,
       appliedProfile: overrides?.appliedProfile,
       profileOverrides: overrides?.profileOverrides,
+      threadId: overrides?.threadId,
+      lastTurnId: overrides?.lastTurnId,
       status: 'active',
       connectedAt: Date.now(),
     }
@@ -236,6 +238,8 @@ export class SessionRegistry {
         appliedProfile: s.appliedProfile,
         profileOverrides: s.profileOverrides,
         autopilot: s.autopilot,    // new
+        threadId: s.threadId,
+        lastTurnId: s.lastTurnId,
       }
     }
     return result
