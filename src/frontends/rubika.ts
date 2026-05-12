@@ -621,7 +621,13 @@ export class RubikaFrontend {
       const folderPath = this.deps.registry.folderPath(sessionPath)
       const caption = (m.text || '').trim()
       this.saveInboundFile(senderId, inner.chat_id, sessionPath, target, folderPath, sess.uploadDir, inboundFile, caption).catch((err) => {
-        this.send('sendMessage', { chat_id: inner.chat_id, text: `⚠️ Could not save file: ${err}` }).catch(() => {})
+        const reason = err instanceof Error ? err.message : String(err)
+        this.notifyInboundFileFailure(senderId, sessionPath, target, inboundFile, caption, reason)
+          .catch((notifyErr) => process.stderr.write(`rubika: failed to notify session about file download failure: ${notifyErr}\n`))
+        this.send('sendMessage', {
+          chat_id: inner.chat_id,
+          text: `⚠️ Could not save file ${inboundFile.file_name}: ${reason}. I notified ${target} with the file details.`,
+        }).catch(() => {})
       })
       return
     }
@@ -1655,7 +1661,7 @@ export class RubikaFrontend {
         // { download_url: string } for a valid file_id.
         const r1 = (await this.send('getFile', { file_id: fileId })) as { download_url: string }
         const res = await fetch(r1.download_url)
-        if (!res.ok) throw new Error(`download HTTP ${res.status}`)
+        if (!res.ok) throw new Error(`download HTTP ${res.status} on attempt ${attempt}/5`)
         return Buffer.from(await res.arrayBuffer())
       } catch (err) {
         lastErr = err
@@ -1663,6 +1669,43 @@ export class RubikaFrontend {
       }
     }
     throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
+  }
+
+  private async notifyInboundFileFailure(
+    senderId: string,
+    registryKey: string,
+    sessionName: string,
+    file: { file_id: string; file_name: string; type?: string },
+    caption: string,
+    reason: string,
+  ): Promise<void> {
+    const lines = [
+      '[Rubika file received but download failed]',
+      `File: ${file.file_name}`,
+      `Type: ${file.type ?? 'unknown'}`,
+      `Rubika file_id: ${file.file_id}`,
+      `Error: ${reason}`,
+    ]
+    if (caption) lines.push('', 'Caption:', caption)
+    const content = lines.join('\n')
+    const meta = {
+      source: 'hub',
+      frontend: 'rubika' as const,
+      user: senderId,
+      session: sessionName,
+      file_name: file.file_name,
+      file_id: file.file_id,
+      file_download_failed: true,
+    }
+    if (this.agentBackend) {
+      await this.agentBackend.send(registryKey, content, meta)
+    } else {
+      this.socketServer?.sendToSession(registryKey, {
+        type: 'channel_message',
+        content,
+        meta,
+      })
+    }
   }
 
   // ── HTTP plumbing ────────────────────────────────────────────────────────

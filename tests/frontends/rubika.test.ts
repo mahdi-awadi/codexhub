@@ -1892,7 +1892,7 @@ describe('inbound file save (Task 15)', () => {
   test('file save error (bad download) replies "⚠️ Could not save file: ..."', async () => {
     const tmpDir = mkdtempSync(joinPath(tmpdir(), 'rubika-test-'))
     try {
-      const { r, registry, sender } = makeFrontend()
+      const { r, registry, sender, socketServer } = makeFrontend()
       ;(r as any).downloadBackoffsMs = [0, 0, 0, 0]
       registry.register(`${tmpDir}:0`, { name: 'sap' })
 
@@ -1913,10 +1913,16 @@ describe('inbound file save (Task 15)', () => {
         await new Promise(rs => setTimeout(rs, 30))
 
         const errReply = sender.calls.find(
-          c => c.method === 'sendMessage' && (c.body as any).text?.includes('⚠️ Could not save file:'),
+          c => c.method === 'sendMessage' && (c.body as any).text?.includes('⚠️ Could not save file'),
         )
         expect(errReply).toBeDefined()
         expect((errReply!.body as any).text).toContain('503')
+        expect((errReply!.body as any).text).toContain('bad.txt')
+        const notice = socketServer.sent.find(s => s.message.content.includes('download failed'))
+        expect(notice).toBeDefined()
+        expect(notice!.message.content).toContain('File: bad.txt')
+        expect(notice!.message.content).toContain('Rubika file_id: file123')
+        expect(notice!.message.meta.file_download_failed).toBe(true)
       } finally {
         globalThis.fetch = originalFetch
       }
