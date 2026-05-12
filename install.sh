@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# ChannelHub installer — gold standard one-liner install
+# CodexHub installer — gold standard one-liner install
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/mahdi-awadi/channelhub/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/mahdi-awadi/codexhub/main/install.sh | bash
 # Or:
 #   ./install.sh
 
@@ -16,8 +16,8 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # Config
-REPO="mahdi-awadi/channelhub"
-INSTALL_DIR="${CHANNELHUB_DIR:-$HOME/.channelhub}"
+REPO="mahdi-awadi/codexhub"
+INSTALL_DIR="${CODEXHUB_DIR:-$HOME/.codexhub}"
 CONFIG_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/channels/hub}"
 CLAUDE_CONFIG="$HOME/.claude.json"
 
@@ -29,8 +29,8 @@ die() { err "$*"; exit 1; }
 
 # ─── Header ──────────────────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}ChannelHub Installer${NC}"
-echo "Multi-session channel plugin for Claude Code"
+echo -e "${BOLD}CodexHub Installer${NC}"
+echo "Multi-session hub for Codex"
 echo ""
 
 # ─── Prerequisites ───────────────────────────────────────────────────────────
@@ -72,10 +72,10 @@ if ! command -v tmux >/dev/null 2>&1; then
 fi
 ok "tmux: $(tmux -V)"
 
-# 5. Check Claude Code
-if ! command -v claude >/dev/null 2>&1; then
-  warn "Claude Code CLI not found. Install from: https://claude.ai/code"
-  echo "  (You can still install ChannelHub; set up Claude later)"
+# 5. Check Codex
+if ! command -v codex >/dev/null 2>&1; then
+  warn "Codex CLI not found."
+  echo "  (You can still install CodexHub; set up Codex later)"
 fi
 
 # 6. Check jq (optional, used for config edits)
@@ -129,8 +129,8 @@ fi
 # ─── Register MCP Server in ~/.claude.json ───────────────────────────────────
 log "Registering MCP server"
 if [ ! -f "$CLAUDE_CONFIG" ]; then
-  warn "$CLAUDE_CONFIG not found — Claude Code may not be set up yet"
-  echo "  After installing Claude Code, add this to $CLAUDE_CONFIG manually:"
+  warn "$CLAUDE_CONFIG not found — Codex may not be set up yet"
+  echo "  After installing Codex, add this to $CLAUDE_CONFIG manually:"
   echo ""
   cat << EOF
   {
@@ -234,8 +234,8 @@ echo ""
 echo "  2. Start the daemon:"
 echo "     ${BLUE}channelhub start${NC}"
 echo ""
-echo "  3. Connect Claude Code (from any project):"
-echo "     ${BLUE}claude --dangerously-load-development-channels server:hub${NC}"
+echo "  3. Connect Codex (from any project):"
+echo "     ${BLUE}codex${NC}"
 echo ""
 echo "  4. Open the web dashboard:"
 echo "     ${BLUE}http://localhost:3000${NC}"

@@ -1,8 +1,8 @@
 {
-  "name": "channelhub",
+  "name": "codexhub",
   "version": "0.1.0-beta.2",
-  "description": "Multi-session channel plugin for Claude Code — manage all your sessions from Telegram, web, or CLI",
-  "repository": "https://github.com/mahdi-awadi/channelhub",
+  "description": "Multi-session Codex hub — manage all your sessions from Telegram, Rubika, web, or CLI",
+  "repository": "https://github.com/mahdi-awadi/codexhub",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {

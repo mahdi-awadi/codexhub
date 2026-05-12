@@ -13,6 +13,7 @@ import {
 } from '../../src/frontends/web'
 import { SessionRegistry } from '../../src/session-registry'
 import { ScreenManager } from '../../src/screen-manager'
+import type { AgentSessionBackend, StartSessionInput } from '../../src/agent-backend'
 
 const TOKEN = 'test-bot-token-abc123'
 const ALLOWED = '123'
@@ -610,5 +611,62 @@ describe('POST /api/spawn with resume', () => {
     })
     expect(res.status).toBe(400)
     expect(spawnCalls.length).toBe(0)
+  })
+})
+
+describe('POST /api/spawn with AgentSessionBackend', () => {
+  let web: WebFrontend
+  let backendCalls: StartSessionInput[]
+
+  beforeEach(async () => {
+    backendCalls = []
+    const registry = new SessionRegistry({ defaultTrust: 'ask', defaultUploadDir: '.' })
+    const backend: AgentSessionBackend = {
+      async startSession(input) {
+        backendCalls.push(input)
+        return { sessionPath: `${input.path}:0`, threadId: 'thread_1' }
+      },
+      async resumeSession(input) {
+        backendCalls.push(input)
+        return { sessionPath: `${input.path}:0`, threadId: 'thread_1' }
+      },
+      async stopSession() {},
+      async removeSession() {},
+      async send() { return true },
+      async resolveApproval() {},
+      async peek() { return '' },
+      async shutdown() {},
+    }
+    web = new WebFrontend({
+      port: 0,
+      registry,
+      router: null as any,
+      permissions: null as any,
+      socketServer: null as any,
+      screenManager: null as any,
+      agentBackend: backend,
+      telegramToken: TOKEN,
+      telegramBotUsername: '',
+      telegramAllowFrom: [ALLOWED],
+      taskMonitor: null,
+    })
+    await web.start()
+  })
+
+  afterEach(async () => {
+    await web.stop()
+  })
+
+  test('spawn uses the Codex backend when no ScreenManager is configured', async () => {
+    const res = await fetch(`http://localhost:${web.port}/api/spawn`, {
+      method: 'POST',
+      headers: { Cookie: authCookie(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'codexhub', path: '/home/codexhub', instructions: 'hello' }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(backendCalls).toEqual([
+      { name: 'codexhub', path: '/home/codexhub', instructions: 'hello', teamSize: 1 },
+    ])
   })
 })

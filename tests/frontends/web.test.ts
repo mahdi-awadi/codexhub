@@ -106,6 +106,43 @@ describe('WebFrontend', () => {
     expect(data.pane).toContain('120 lines')
   })
 
+  test('GET /api/peek/:name returns backend event log when AgentSessionBackend is present', async () => {
+    const registry = new SessionRegistry({ defaultTrust: 'ask', defaultUploadDir: '.' })
+    registry.register('/p/foo:0', { name: 'foo' })
+    const web = new WebFrontend({
+      port: 0,
+      registry,
+      router: null as any,
+      permissions: null as any,
+      socketServer: null as any,
+      screenManager: null as any,
+      agentBackend: {
+        async startSession() { throw new Error('unused') },
+        async resumeSession() { throw new Error('unused') },
+        async stopSession() {},
+        async removeSession() {},
+        async send() { return true },
+        async resolveApproval() {},
+        async peek(_path: string, lines: number) { return `backend peek ${lines}` },
+        async shutdown() {},
+      },
+      telegramToken: TOKEN,
+      telegramBotUsername: '',
+      telegramAllowFrom: [ALLOWED_USER],
+      taskMonitor: null,
+    })
+    await web.start()
+    try {
+      const res = await fetch(`http://localhost:${web.port}/api/peek/foo?lines=12`, {
+        headers: { Cookie: authCookie() },
+      })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toMatchObject({ name: 'foo', lines: 12, pane: 'backend peek 12' })
+    } finally {
+      await web.stop()
+    }
+  })
+
   test('GET /api/peek/:name returns 404 when tmux session is missing', async () => {
     await web.stop()
     const stubScreen = {

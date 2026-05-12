@@ -44,6 +44,61 @@ export function createLineJsonRpcTransport(input: LineTransportInput): JsonRpcTr
   }
 }
 
+export function createCodexAppServerTransport(args: string[] = ['codex', 'app-server', '--listen', 'stdio://']): JsonRpcTransport & {
+  setReceiver(cb: (message: unknown) => void): void
+} {
+  const proc = Bun.spawn(args, {
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: process.env,
+  })
+  let receiver: (message: unknown) => void = () => {}
+  let buffer = ''
+  const decoder = new TextDecoder()
+
+  ;(async () => {
+    const reader = proc.stdout.getReader()
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value)
+      let idx
+      while ((idx = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, idx)
+        buffer = buffer.slice(idx + 1)
+        if (!line.trim()) continue
+        try {
+          receiver(JSON.parse(line))
+        } catch (err) {
+          process.stderr.write(`codex app-server: failed to parse stdout JSON: ${err}\n`)
+        }
+      }
+    }
+  })().catch((err) => process.stderr.write(`codex app-server stdout failed: ${err}\n`))
+
+  ;(async () => {
+    const reader = proc.stderr.getReader()
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      process.stderr.write(decoder.decode(value))
+    }
+  })().catch(() => {})
+
+  return {
+    setReceiver(cb) {
+      receiver = cb
+    },
+    send(message) {
+      proc.stdin.write(JSON.stringify(message) + '\n')
+    },
+    close() {
+      proc.kill()
+    },
+  }
+}
+
 export class CodexAppServerClient {
   private nextId = 1
   private pending = new Map<JsonRpcId, PendingRequest>()

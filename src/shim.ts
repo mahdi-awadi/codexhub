@@ -136,7 +136,7 @@ function main() {
         },
       },
       instructions: [
-        'This session is connected to Claude Code Hub — a multi-project management system.',
+        'This session is connected to CodexHub — a multi-project management system.',
         'Messages arrive from the hub frontends (Telegram, Web, CLI).',
         'Reply with the reply tool — pass the text you want to send back.',
         'The hub routes your replies to the user on whichever frontend they are using.',

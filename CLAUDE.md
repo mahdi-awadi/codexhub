@@ -1,13 +1,13 @@
-# Claude Code Hub
+# CodexHub
 
-Multi-session Claude Code channel plugin with Web dashboard, Telegram bot, and CLI.
+Multi-session Codex hub with Web dashboard, Telegram bot, Rubika bot, and CLI.
 
 ## Architecture
 
 ```
 Hub Daemon (long-running, systemd: channelhub.service)
   ├── Socket Server (Unix: ~/.claude/channels/hub/hub.sock)
-  │     ↕ shim processes (one per Claude Code session)
+  │     ↕ backend adapters (one per Codex session)
   ├── Web Dashboard (configurable port, Telegram login)
   ├── Telegram Bot (configurable token)
   ├── API Server (for CLI)
@@ -16,7 +16,7 @@ Hub Daemon (long-running, systemd: channelhub.service)
 
 Two layers:
 - **Daemon** — single process managing everything. Runs as a systemd service (`channelhub.service`); logs to `/var/log/channelhub.log`.
-- **Shim** — tiny MCP bridge per Claude session. Claude launches it via `--channels server:hub`
+- **Backend adapter** — bridges frontend messages, permissions, and session state to Codex.
 
 ## Quick Start
 
@@ -39,7 +39,7 @@ The daemon runs as a systemd service. Unit file lives at `/etc/systemd/system/ch
 
 ```ini
 [Unit]
-Description=Claude Code Hub daemon
+Description=CodexHub daemon
 After=network.target
 
 [Service]
@@ -67,7 +67,7 @@ systemctl status channelhub       # check state
 tail -f /var/log/channelhub.log   # tail logs
 ```
 
-### 3. Connect Claude Code (from any project)
+### 3. Connect Codex (from any project)
 ```bash
 cd /path/to/project
 claude --dangerously-load-development-channels server:hub

@@ -19,7 +19,7 @@ export function parseCliArgs(args: string[]): { command: string; args: string[] 
 }
 
 const HELP_TEXT = `
-Claude Code Hub CLI
+CodexHub CLI
 
 Commands:
   list                         List all sessions

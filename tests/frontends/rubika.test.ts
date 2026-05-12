@@ -8,6 +8,7 @@ import { SessionRegistry } from '../../src/session-registry'
 import { saveProfiles, loadProfiles } from '../../src/profiles'
 import { HUB_DIR } from '../../src/config'
 import type { SessionState, Profile } from '../../src/types'
+import type { AgentSessionBackend, StartSessionInput } from '../../src/agent-backend'
 
 // In-memory router stub — captures calls so we can assert routing.
 class StubRouter {
@@ -314,7 +315,7 @@ describe('RubikaFrontend.dispatchCommand', () => {
     r.handleWebhook(update('u1', '/start'))
     await new Promise(rs => setTimeout(rs, 5))
     expect(sender.calls.find(c => c.method === 'sendMessage')?.body).toMatchObject({
-      text: expect.stringContaining('Connected to Claude Code Hub'),
+      text: expect.stringContaining('Connected to CodexHub'),
     })
   })
 
@@ -715,6 +716,38 @@ describe('RubikaFrontend.handleInlineWebhook', () => {
     expect((r as any).pendingRestartBacklog.has('u1')).toBe(false)
   })
 
+  test('plain-text Drain clears restart backlog when Rubika omits button_id', () => {
+    const { r, router, sender } = makeFrontend()
+    const captured: RubikaUpdateBody[] = [
+      { update: { type: 'NewMessage', chat_id: 'chat-u1', new_message: { message_id: 'm1', text: 'stale', time: '1', is_edited: false, sender_type: 'User', sender_id: 'u1' } } },
+    ]
+    ;(r as any).pendingRestartBacklog.set('u1', captured)
+    ;(r as any).chatIdByUser.set('u1', 'chat-u1')
+
+    r.handleWebhook(update('u1', 'Drain'))
+
+    expect(router.calls.length).toBe(0)
+    expect((r as any).pendingRestartBacklog.has('u1')).toBe(false)
+    const body = sender.calls.find(c => c.method === 'sendMessage')?.body as any
+    expect(body.chat_keypad_type).toBe('Remove')
+  })
+
+  test('plain-text Keep & process replays restart backlog when Rubika omits button_id', () => {
+    const { r, registry, router } = makeFrontend()
+    registry.register('/p/sap:0', { name: 'sap' })
+    const captured: RubikaUpdateBody[] = [
+      { update: { type: 'NewMessage', chat_id: 'chat-u1', new_message: { message_id: 'm1', text: 'stale hello', time: '1', is_edited: false, sender_type: 'User', sender_id: 'u1' } } },
+    ]
+    ;(r as any).pendingRestartBacklog.set('u1', captured)
+    ;(r as any).chatIdByUser.set('u1', 'chat-u1')
+
+    r.handleWebhook(update('u1', 'Keep & process'))
+
+    expect(router.calls.find(c => c.text === 'stale hello')).toBeTruthy()
+    expect(router.calls.find(c => c.text === 'Keep & process')).toBeFalsy()
+    expect((r as any).pendingRestartBacklog.has('u1')).toBe(false)
+  })
+
   test('drops malformed payloads', () => {
     const { r, permissions } = makeFrontend()
     expect(() => r.handleInlineWebhook({} as any)).not.toThrow()
@@ -921,6 +954,35 @@ describe('cmdSpawn / cmdKill / cmdRemove / cmdRename', () => {
     const body = sender.calls.find(c => c.method === 'sendMessage')?.body as any
     expect(body.text).toContain('Spawned alpha at /home/foo')
     expect(body.text).toContain('now active')
+  })
+
+  test('/spawn alpha /home/foo uses AgentSessionBackend when configured', async () => {
+    const { r, sender } = makeFrontend()
+    const calls: StartSessionInput[] = []
+    const backend: AgentSessionBackend = {
+      async startSession(input) {
+        calls.push(input)
+        return { sessionPath: `${input.path}:0`, threadId: 'thread_1' }
+      },
+      async resumeSession(input) {
+        calls.push(input)
+        return { sessionPath: `${input.path}:0`, threadId: input.threadId ?? 'thread_1' }
+      },
+      async stopSession() {},
+      async removeSession() {},
+      async send() { return true },
+      async resolveApproval() {},
+      async peek() { return '' },
+      async shutdown() {},
+    }
+    ;(r as any).agentBackend = backend
+
+    r.handleWebhook(update('u1', '/spawn alpha /home/foo'))
+    await new Promise(rs => setTimeout(rs, 5))
+
+    expect(calls).toEqual([{ name: 'alpha', path: '/home/foo', profileName: undefined, teamSize: 1 }])
+    const body = sender.calls.find(c => c.method === 'sendMessage')?.body as any
+    expect(body.text).toContain('Spawned alpha at /home/foo')
   })
 
   test('/spawn alpha /home/foo 3 calls spawnTeam(name, path, 3, undefined, undefined)', async () => {
@@ -1257,6 +1319,27 @@ describe('cmdPeek', () => {
     expect(body.text).toContain('foo')
     expect(body.text).toContain('PANE_CONTENT_LINE_1')
     expect(body.text).toContain('PANE_CONTENT_LINE_2')
+  })
+
+  test('/peek <name> uses AgentSessionBackend when configured', async () => {
+    const { r, registry, sender } = makeFrontend()
+    registry.register('/p/foo:0', { name: 'foo' })
+    ;(r as any).agentBackend = {
+      async startSession() { throw new Error('unused') },
+      async resumeSession() { throw new Error('unused') },
+      async stopSession() {},
+      async removeSession() {},
+      async send() { return true },
+      async resolveApproval() {},
+      async peek(_path: string, lines: number) { return `backend peek ${lines}` },
+      async shutdown() {},
+    } satisfies AgentSessionBackend
+
+    r.handleWebhook(update('u1', '/peek foo 33'))
+    await new Promise(rs => setTimeout(rs, 5))
+
+    const body = sender.calls.find(c => c.method === 'sendMessage')?.body as any
+    expect(body.text).toContain('backend peek 33')
   })
 
   test('/peek with custom line count passes it through', async () => {

@@ -23,6 +23,7 @@ import type { Messages } from '../messages'
 import type { RubikaFrontend, RubikaUpdateBody } from './rubika'
 import { saveSessions } from '../config'
 import { listPriorSessions } from '../claude-sessions'
+import type { AgentSessionBackend } from '../agent-backend'
 
 const COOKIE_NAME = 'hub_session'
 const COOKIE_MAX_AGE_SEC = 86400 // 24h
@@ -130,6 +131,7 @@ type WebFrontendDeps = {
   permissions: PermissionEngine | null
   socketServer: SocketServer | null
   screenManager: ScreenManager | null
+  agentBackend?: AgentSessionBackend | null
   telegramToken: string
   telegramBotUsername: string
   telegramAllowFrom: string[]
@@ -608,7 +610,19 @@ export class WebFrontend {
       }
     } else if (msg.type === 'spawn') {
       const { name, path, teamSize, instructions } = msg as { name: string; path: string; teamSize?: number; instructions?: string }
-      if (this.deps.screenManager && name && path) {
+      if (this.deps.agentBackend && name && path) {
+        const size = teamSize ?? 1
+        if (size > 1) {
+          this.broadcast({ type: 'error', message: 'Teams are not available in CodexHub v1.' })
+        } else {
+          this.deps.agentBackend.startSession({ name, path, teamSize: size, instructions })
+            .then(() => {
+              saveSessions(this.deps.registry.toSaveFormat())
+              this.refreshSessions()
+            })
+            .catch(console.error)
+        }
+      } else if (this.deps.screenManager && name && path) {
         const size = teamSize ?? 1
         if (size > 1) {
           this.deps.screenManager.spawnTeam(name, path, size, instructions).catch(console.error)
@@ -621,7 +635,9 @@ export class WebFrontend {
       if (requestId && behavior) {
         if (this.deps.permissions) {
           const result = this.deps.permissions.resolve(requestId, behavior)
-          if (result && this.deps.socketServer) {
+          if (result && this.deps.agentBackend) {
+            this.deps.agentBackend.resolveApproval(requestId, behavior).catch(console.error)
+          } else if (result && this.deps.socketServer) {
             this.deps.socketServer.sendToSession(result.sessionPath, {
               type: 'permission_response',
               requestId: result.response.requestId,
@@ -786,7 +802,7 @@ export class WebFrontend {
         resume?: 'continue' | { sessionId: string }
       }
       const { name, path, teamSize, instructions, resume } = body
-      if (!this.deps.screenManager) return new Response('No screen manager', { status: 503 })
+      if (!this.deps.agentBackend && !this.deps.screenManager) return new Response('No backend', { status: 503 })
 
       let resumeSpec: ResumeSpec | undefined
       if (resume === 'continue') {
@@ -799,6 +815,24 @@ export class WebFrontend {
       }
 
       const size = teamSize ?? 1
+      if (this.deps.agentBackend) {
+        if (size > 1) return new Response('Teams are not available in CodexHub v1', { status: 400 })
+        if (resumeSpec) {
+          await this.deps.agentBackend.resumeSession({
+            name,
+            path,
+            instructions,
+            teamSize: size,
+            threadId: resumeSpec.mode === 'session' ? resumeSpec.id : undefined,
+          })
+        } else {
+          await this.deps.agentBackend.startSession({ name, path, instructions, teamSize: size })
+        }
+        saveSessions(this.deps.registry.toSaveFormat())
+        this.refreshSessions()
+        return Response.json({ ok: true })
+      }
+
       if (size > 1) {
         if (resumeSpec) return new Response('Resume not supported with teamSize > 1', { status: 400 })
         this.deps.screenManager.spawnTeam(name, path, size, instructions).catch(err => {
@@ -816,6 +850,11 @@ export class WebFrontend {
   private async handleKill(req: Request): Promise<Response> {
     try {
       const { name } = (await req.json()) as { name: string }
+      if (this.deps.agentBackend) {
+        await this.deps.agentBackend.stopSession(name)
+        this.refreshSessions()
+        return Response.json({ ok: true })
+      }
       const isManaged = this.deps.screenManager?.isManaged(name) ?? false
 
       // Either path: send Ctrl-C + `/exit` to the tmux session so Claude
@@ -845,6 +884,12 @@ export class WebFrontend {
       const { name } = (await req.json()) as { name: string }
       const path = this.deps.registry.findByName(name)
       if (!path) return new Response(`Session not found: ${name}`, { status: 404 })
+      if (this.deps.agentBackend) {
+        await this.deps.agentBackend.removeSession(name)
+        saveSessions(this.deps.registry.toSaveFormat())
+        this.refreshSessions()
+        return Response.json({ ok: true })
+      }
       const state = this.deps.registry.get(path)
       if (state && state.status !== 'disconnected') {
         return new Response('Session is still connected — use close instead', { status: 409 })
@@ -1231,13 +1276,18 @@ export class WebFrontend {
   }
 
   private async handlePeek(name: string, linesRaw: string | null): Promise<Response> {
-    if (!this.deps.screenManager) {
-      return Response.json({ error: 'screen manager unavailable' }, { status: 503 })
-    }
     const lines = linesRaw && /^\d+$/.test(linesRaw)
       ? Math.max(1, Math.min(parseInt(linesRaw, 10), 500))
       : 80
     const path = this.deps.registry.findByName(name)
+    if (this.deps.agentBackend) {
+      if (!path) return Response.json({ error: 'Session not found', name }, { status: 404 })
+      const pane = await this.deps.agentBackend.peek(path, lines)
+      return Response.json({ name, lines, pane })
+    }
+    if (!this.deps.screenManager) {
+      return Response.json({ error: 'screen manager unavailable' }, { status: 503 })
+    }
     const managed = path ? this.deps.screenManager.getManagedByPath(this.deps.registry.folderPath(path)) : undefined
     const tmuxName = managed?.sessionName ?? `hub-${name}`
     try {

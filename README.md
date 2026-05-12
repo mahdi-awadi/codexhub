@@ -1,21 +1,21 @@
-# ChannelHub
+# CodexHub
 
-> ⚠️ **Beta Software** — ChannelHub is in active development. Expect bugs, breaking changes, and rough edges. Bug reports and contributions are welcome. Do not rely on it for critical workflows yet.
+> ⚠️ **Beta Software** — CodexHub is in active development. Expect bugs, breaking changes, and rough edges. Bug reports and contributions are welcome. Do not rely on it for critical workflows yet.
 
-A multi-session channel plugin for [Claude Code](https://claude.ai/code) that lets you manage all your Claude sessions from one place — Telegram, Rubika, web dashboard, or CLI.
+A multi-session hub for Codex that lets you manage all your Codex sessions from one place — Telegram, Rubika, web dashboard, or CLI.
 
-**The problem:** Claude Code channels are 1:1 — one bot per session. If you run multiple projects, you need multiple bots or keep switching.
+**The problem:** Codex sessions are usually managed one terminal at a time. If you run multiple projects, you need to keep switching contexts.
 
-**The solution:** ChannelHub runs a single daemon that accepts connections from all your Claude sessions. Send messages, approve permissions, upload files, and spawn agent teams — from one Telegram bot, Rubika bot, or web dashboard.
+**The solution:** CodexHub runs a single daemon that accepts connections from all your Codex sessions. Send messages, approve permissions, upload files, and manage work — from one Telegram bot, Rubika bot, or web dashboard.
 
 ## Features
 
-- **Multi-session management** — all Claude sessions visible in one dashboard
+- **Multi-session management** — all Codex sessions visible in one dashboard
 - **Telegram bot** — send messages, approve permissions, upload photos/documents from your phone
 - **Rubika bot** — text-message routing through a webhook-based MVP frontend
 - **Web dashboard** — real-time chat, permission prompts, session status, file upload
 - **Permission relay** — approve/deny tool use from Telegram or web (native MCP channel protocol)
-- **Agent teams** — spawn teams of Claude instances with shared task coordination
+- **Agent teams** — coordinate multiple Codex sessions from one place
 - **Session routing** — switch between projects, broadcast to all, or target specific sessions
 - **CLI** — manage sessions from the terminal
 - **Prompt tags** — toggle instructions (use superpowers, TDD, be concise) appended to messages
@@ -27,16 +27,16 @@ You (Telegram / Rubika / Web / CLI)
        ↓
 Hub Daemon (manages everything)
   ├── Socket Server (Unix socket)
-  │     ↕ shim ↔ Claude session A
-  │     ↕ shim ↔ Claude session B
-  │     ↕ shim ↔ Claude session C
+  │     ↕ adapter ↔ Codex session A
+  │     ↕ adapter ↔ Codex session B
+  │     ↕ adapter ↔ Codex session C
   ├── Telegram Bot
   ├── Rubika Bot
   ├── Web Dashboard
   └── Permission Engine
 ```
 
-Each Claude session runs with `--channels server:hub`. The hub's **shim** (MCP server) bridges Claude's stdio to the daemon via Unix socket. The daemon routes messages between your frontends and all connected sessions.
+Each Codex session is represented in the daemon and routed through the Codex backend adapter. The daemon routes messages between your frontends and all connected sessions.
 
 ## Prerequisites
 
@@ -47,7 +47,7 @@ Before installing, make sure you have:
   - Debian/Ubuntu: `apt install tmux`
   - RHEL/Fedora: `dnf install tmux`
   - macOS: `brew install tmux`
-- **[Claude Code](https://claude.ai/code)** with claude.ai login
+- **Codex CLI / Codex App Server access**
 - **git** — to clone the repository
 - **jq** (recommended) — for automatic config updates
 - **A Telegram bot token** (optional) — create one with [@BotFather](https://t.me/BotFather) if you want the Telegram frontend
@@ -63,7 +63,7 @@ curl -fsSL https://raw.githubusercontent.com/mahdi-awadi/channelhub/main/install
 
 This will:
 1. Check prerequisites (install Bun if missing)
-2. Clone ChannelHub to `~/.channelhub`
+2. Clone CodexHub to `~/.codexhub`
 3. Install dependencies
 4. Create config template at `~/.claude/channels/hub/config.json`
 5. Register the MCP server in `~/.claude.json`
@@ -96,12 +96,12 @@ sudo systemctl status channelhub       # Check if it's running
 tail -f /var/log/channelhub.log        # View daemon logs
 ```
 
-### Connect Claude Code
+### Connect Codex
 
 In any project folder:
 
 ```bash
-claude --dangerously-load-development-channels server:hub
+codex
 ```
 
 Your session appears in the dashboard at `http://localhost:3000` immediately.
@@ -125,8 +125,8 @@ channelhub trust <name> auto
 If you prefer to install manually instead of the one-liner:
 
 ```bash
-git clone https://github.com/mahdi-awadi/channelhub.git ~/.channelhub
-cd ~/.channelhub
+git clone https://github.com/mahdi-awadi/codexhub.git ~/.codexhub
+cd ~/.codexhub
 bun install
 
 # Create config
@@ -149,7 +149,7 @@ sudo systemctl status channelhub
 |---------|-------------|
 | `/list` | Show sessions, pick active (inline buttons) |
 | `/status` | Dashboard with session details |
-| `/spawn <name> <path> [team-size]` | Launch Claude in tmux |
+| `/spawn <name> <path> [team-size]` | Start a Codex session |
 | `/kill <name>` | Stop a session |
 | `/remove <name>` | Remove a disconnected session from the list |
 | `/team <name> [add]` | Show team status or add teammate |
@@ -175,7 +175,7 @@ Rubika support is currently a text-only webhook MVP.
 - Set `rubikaWebhookBase` to the public HTTPS origin that can reach the web frontend, for example `https://hub.example.com`.
 - The daemon registers `receiveUpdate` with Rubika at `/api/rubika/webhook/<secret>`.
 - Inbound text from an allowed sender routes to that sender's active session, defaulting to the first active session.
-- Claude replies are sent with a `[session]` prefix after an allowed sender has messaged the bot once, which lets ChannelHub learn Rubika's `chat_id`.
+- Codex replies are sent with a `[session]` prefix after an allowed sender has messaged the bot once, which lets CodexHub learn Rubika's `chat_id`.
 
 Rubika does not yet support ChannelHub commands, permission buttons, autopilot draft buttons, file uploads, or session switching UI.
 
@@ -203,7 +203,7 @@ Access at `http://localhost:<webPort>` (or via reverse proxy).
 
 ## Browser (headless Chrome)
 
-ChannelHub auto-spawns a headless Chrome on `127.0.0.1:9222` so Claude
+CodexHub auto-spawns a headless Chrome on `127.0.0.1:9222` so Codex
 sessions can drive a browser via Google's
 [`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp).
 
@@ -240,11 +240,11 @@ sessions).
 
 ## Permission Relay
 
-When Claude wants to run a tool (Bash, Write, etc.), the permission prompt appears in both the terminal AND your Telegram/web dashboard. You can approve from either place — first response wins.
+When Codex wants to run a tool (Bash, Write, etc.), the permission prompt appears in both the terminal AND your Telegram/web dashboard. You can approve from either place — first response wins.
 
 ```
-Claude wants to use Bash → permission_request → Hub → Telegram/Web
-You click Allow → Hub → Claude proceeds
+Codex wants to use Bash → permission_request → Hub → Telegram/Web
+You click Allow → Hub → Codex proceeds
 ```
 
 - **Trusted sessions** (`auto-approve`): auto-allowed, you never see the prompt
@@ -252,7 +252,7 @@ You click Allow → Hub → Claude proceeds
 
 ## Agent Teams
 
-Spawn multiple Claude instances that work together:
+Spawn multiple Codex sessions that work together:
 
 - **Web UI:** check "Run as team" when spawning, set team size
 - **Telegram:** `/spawn myproject /home/user/project 3` (1 lead + 2 teammates)
@@ -287,7 +287,7 @@ HUB_URL=http://localhost:3000 bun run src/cli.ts <command>
 |---------|---------|
 | `list` | Show all sessions |
 | `status` | Detailed session info |
-| `spawn <name> <path>` | Launch Claude in tmux |
+| `spawn <name> <path>` | Start a Codex session |
 | `kill <name>` | Stop a session |
 | `send <name> <message>` | Send message to session |
 | `trust <name> auto` | Set auto-approve |
@@ -298,14 +298,14 @@ HUB_URL=http://localhost:3000 bun run src/cli.ts <command>
 
 ## Security Model
 
-ChannelHub runs as **you** on your own machine and treats anyone who can authenticate as having your shell. Accordingly:
+CodexHub runs as **you** on your own machine and treats anyone who can authenticate as having your shell. Accordingly:
 
 - **The web server binds to `127.0.0.1` only.** It is not reachable from the LAN. Remote access must go through a reverse proxy or tunnel (see below).
 - **Authentication is cookie-based.** Logging in via the Telegram Login Widget verifies an HMAC and sets an `HttpOnly`, `SameSite=Strict` session cookie signed with your bot token. Every `/api/*` request and WebSocket upgrade requires that cookie; unauthenticated requests return `401`.
 - **`telegramAllowFrom` is deny-by-default.** Leaving the list empty disables both the Telegram frontend (refuses to start) and web login. There is no "allow everyone" mode.
 - **The Unix socket is `0600`** and restricted to your UID, so other local users cannot impersonate a shim.
 - **Uploads are sanitized and scoped** — filenames are stripped of path separators and unsafe characters; the resolved destination must stay inside the session's project directory.
-- **Auto-fetched file contents** (when Claude says "saved to /path/..." and the hub forwards the file body to your Telegram/web) are scoped to each session's project root. Prompt-injection cannot make the daemon read `~/.ssh/` or `/etc/`.
+- **Auto-fetched file contents** (when Codex says "saved to /path/..." and the hub forwards the file body to your Telegram/web) are scoped to each session's project root. Prompt-injection cannot make the daemon read `~/.ssh/` or `/etc/`.
 
 ## Exposing the Web Dashboard
 
@@ -323,7 +323,7 @@ Configure your bot's domain in @BotFather (`/setdomain`) so the Telegram Login W
 
 - [Bun](https://bun.sh) >= 1.0
 - [tmux](https://github.com/tmux/tmux) (for daemon and session management)
-- [Claude Code](https://claude.ai/code) with claude.ai login
+- Codex CLI / Codex App Server access
 - A Telegram bot token (optional, for Telegram frontend)
 - A Rubika bot token (optional, for Rubika frontend)
 
@@ -356,9 +356,9 @@ bun run src/cli.ts    # CLI tool
 
 ## Plugin Status
 
-> **ChannelHub is not yet on the approved marketplace.** During the research preview, custom channels must use `--dangerously-load-development-channels server:hub` to run. This flag bypasses the allowlist check for your specific server entry. Permission relay and all other channel features work normally.
+> **CodexHub is under active porting.** The current branch is replacing the old channel transport with a Codex backend while preserving Telegram, Rubika, web, CLI, permissions, uploads, and verification.
 
-The project is structured as a Claude Code channel plugin and ready to submit to the [official marketplace](https://platform.claude.com/plugins/submit). Once approved, users will be able to install it with `/plugin install channelhub@marketplace` and use `--channels plugin:channelhub@marketplace` without the development flag.
+The project is structured as a CodexHub daemon with frontend adapters and a Codex backend adapter.
 
 ## License
 

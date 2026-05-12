@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Claude Code Hub</title>
+  <title>CodexHub</title>
   <!-- Markdown renderer + sanitizer for chat bubbles -->
   <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
@@ -915,14 +915,14 @@
   <div id="drop-overlay">Drop file to upload</div>
 
   <div id="login-screen" style="display:none; position:fixed; inset:0; background:var(--bg); flex-direction:column; align-items:center; justify-content:center; gap:24px; z-index:200;">
-    <div style="font-size:24px; font-weight:700; color:var(--accent);">Claude Code Hub</div>
+    <div style="font-size:24px; font-weight:700; color:var(--accent);">CodexHub</div>
     <div style="color:var(--text-muted); font-size:14px;">Sign in with Telegram to continue</div>
     <div id="telegram-widget-container"></div>
   </div>
 
   <div id="sidebar">
     <div id="sidebar-header">
-      <span id="hub-title">Claude Code Hub</span>
+      <span id="hub-title">CodexHub</span>
       <button id="spawn-btn" class="icon-btn primary" title="Spawn a new session" onclick="promptSpawn()">+</button>
       <button id="settings-btn" class="icon-btn" title="Autopilot personalities" onclick="openPersonalitiesPanel()">P</button>
       <button id="theme-btn" class="icon-btn" title="Cycle theme (dark)" onclick="cycleTheme()">🎨</button>
@@ -1561,7 +1561,7 @@
       } else {
         const close = document.createElement('button')
         close.className = 'kebab-item danger'
-        close.innerHTML = `<span>✕</span><span>${s.managed ? 'Close session' : 'Remove from list (Claude keeps running)'}</span>`
+        close.innerHTML = `<span>✕</span><span>${s.managed ? 'Close session' : 'Remove from list (Codex keeps running)'}</span>`
         close.onclick = () => { closeSession(s.name); closeSessionMenu() }
         menu.appendChild(close)
       }
@@ -2466,7 +2466,7 @@
     }
 
     async function closeSession(name) {
-      if (!confirm(`Close session '${name}'? Claude will exit, then the tmux will close.`)) return
+      if (!confirm(`Close session '${name}'? Codex will exit, then the tmux will close.`)) return
       try {
         await fetch('/api/kill', {
           method: 'POST',

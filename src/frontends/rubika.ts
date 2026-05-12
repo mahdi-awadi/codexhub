@@ -33,6 +33,7 @@ import type { VerificationRunner } from '../verification'
 import type { VetoController } from '../veto-controller'
 import type { AutopilotRunner } from '../autopilot'
 import type { RubikaInviteStore } from '../rubika-invites'
+import type { AgentSessionBackend } from '../agent-backend'
 // Type-only imports below are reserved for later tasks (Tasks 7-17).
 import type { PermissionRequest, TrustLevel, Profile } from '../types'
 import type { VerificationResult } from '../verification'
@@ -115,6 +116,7 @@ export type RubikaFrontendDeps = {
   permissions?: PermissionEngine
   screenManager?: ScreenManager
   socketServer?: SocketServer
+  agentBackend?: AgentSessionBackend
   taskMonitor?: TaskMonitor | null
   verificationRunner?: VerificationRunner
   vetoController?: VetoController
@@ -202,6 +204,7 @@ export class RubikaFrontend {
   private permissions?: PermissionEngine
   private screenManager?: ScreenManager
   private socketServer?: SocketServer
+  private agentBackend?: AgentSessionBackend
   private taskMonitor: TaskMonitor | null
   private verificationRunner?: VerificationRunner
   private vetoController?: VetoController
@@ -220,6 +223,7 @@ export class RubikaFrontend {
     this.permissions = deps.permissions
     this.screenManager = deps.screenManager
     this.socketServer = deps.socketServer
+    this.agentBackend = deps.agentBackend
     this.taskMonitor = deps.taskMonitor ?? null
     this.verificationRunner = deps.verificationRunner
     this.vetoController = deps.vetoController
@@ -332,6 +336,41 @@ export class RubikaFrontend {
       { id: `restart:keep:${senderId}`, label: 'Keep & process' },
       { id: `restart:drain:${senderId}`, label: 'Drain' },
     ]])
+  }
+
+  private restartActionFromText(text: string): 'drain' | 'keep' | null {
+    const normalized = text.trim().toLowerCase().replace(/&/g, 'and').replace(/\s+/g, ' ')
+    if (normalized === 'drain' || normalized === '/drain' || normalized === 'drop' || normalized === 'discard') return 'drain'
+    if (normalized === 'keep' || normalized === '/keep' || normalized === 'keep and process' || normalized === 'keep process') return 'keep'
+    return null
+  }
+
+  private handleRestartBacklogDecision(action: 'drain' | 'keep', targetSenderId: string, chatId: string): void {
+    const captured = this.pendingRestartBacklog.get(targetSenderId)
+    this.pendingRestartBacklog.delete(targetSenderId)
+    const ackText = action === 'keep'
+      ? `✅ Replaying ${captured?.length ?? 0} message(s)...`
+      : '🗑 Dropped pending messages.'
+    this.send('sendMessage', {
+      chat_id: chatId,
+      text: ackText,
+      chat_keypad_type: 'Remove',
+    }).catch(() => {})
+    if (action === 'keep' && captured) {
+      for (const body of captured) {
+        try { this.handleWebhook(body) } catch (err) {
+          process.stderr.write(`rubika: replay error: ${err}\n`)
+        }
+      }
+    }
+  }
+
+  private handleRestartBacklogText(senderId: string, chatId: string, text: string): boolean {
+    if (!this.pendingRestartBacklog.has(senderId)) return false
+    const action = this.restartActionFromText(text)
+    if (!action) return false
+    this.handleRestartBacklogDecision(action, senderId, chatId)
+    return true
   }
 
   private async registerEndpoint(type: 'ReceiveUpdate' | 'ReceiveInlineMessage', url: string): Promise<boolean> {
@@ -590,6 +629,8 @@ export class RubikaFrontend {
     const text = (m.text || '').trim()
     if (text.length === 0) return
 
+    if (isOwner && this.handleRestartBacklogText(senderId, inner.chat_id, text)) return
+
     // Guests are locked to their pinned session: every command (/list, /spawn,
     // /<other-session>, even /<their-own-session>) is rejected; reply-to
     // routing is ignored; text always goes to the pinned session.
@@ -680,7 +721,10 @@ export class RubikaFrontend {
         const requestId = buttonId.slice(isAllow ? 'perm:allow:'.length : 'perm:deny:'.length)
         if (!this.permissions || !this.socketServer) return
         const result = this.permissions.resolve(requestId, isAllow ? 'allow' : 'deny')
-        if (result) {
+        if (result && this.agentBackend) {
+          this.agentBackend.resolveApproval(requestId, isAllow ? 'allow' : 'deny')
+            .catch((err) => process.stderr.write(`rubika: codex approval resolve failed: ${err}\n`))
+        } else if (result) {
           this.socketServer.sendToSession(result.sessionPath, {
             type: 'permission_response',
             requestId: result.response.requestId,
@@ -726,25 +770,9 @@ export class RubikaFrontend {
       const restartMatch = buttonId.match(/^restart:(drain|keep):(.+)$/)
       if (restartMatch) {
         const [, action, targetSenderId] = restartMatch
-        const captured = this.pendingRestartBacklog.get(targetSenderId)
-        this.pendingRestartBacklog.delete(targetSenderId)
         // Always ack — clears the chat_keypad so the user isn't stuck looking
         // at stale Drain/Keep buttons.
-        const ackText = action === 'keep'
-          ? `✅ Replaying ${captured?.length ?? 0} message(s)...`
-          : '🗑 Dropped pending messages.'
-        this.send('sendMessage', {
-          chat_id: im.chat_id,
-          text: ackText,
-          chat_keypad_type: 'Remove',
-        }).catch(() => {})
-        if (action === 'keep' && captured) {
-          for (const body of captured) {
-            try { this.handleWebhook(body) } catch (err) {
-              process.stderr.write(`rubika: replay error: ${err}\n`)
-            }
-          }
-        }
+        this.handleRestartBacklogDecision(action as 'drain' | 'keep', targetSenderId, im.chat_id)
         return
       }
       process.stderr.write(`rubika: unknown inline button id "${buttonId}"\n`)
@@ -874,7 +902,7 @@ export class RubikaFrontend {
 
   private async cmdStart(senderId: string, chatId: string): Promise<void> {
     await this.replyTo(senderId, chatId,
-      '👋 Connected to Claude Code Hub. Use /list to pick a session or send any message to talk to the active one.')
+      '👋 Connected to CodexHub. Use /list to pick a session or send any message to talk to the active one.')
   }
 
   private async cmdList(senderId: string, chatId: string): Promise<void> {
@@ -1017,8 +1045,13 @@ export class RubikaFrontend {
     }
 
     try {
-      const resume: ResumeSpec = { mode: 'continue' }
-      await this.screenManager!.spawn(name, projectPath, undefined, profileName, resume)
+      if (this.agentBackend) {
+        await this.agentBackend.resumeSession({ name, path: projectPath, profileName })
+        saveSessions(this.deps.registry.toSaveFormat())
+      } else {
+        const resume: ResumeSpec = { mode: 'continue' }
+        await this.screenManager!.spawn(name, projectPath, undefined, profileName, resume)
+      }
       this.activeSessionByUser.set(senderId, name)
       await this.replyTo(senderId, chatId, `Resumed ${name} at ${projectPath} (latest session)${profileName ? ` with profile ${profileName}` : ''} — now active`)
     } catch (err) {
@@ -1057,11 +1090,20 @@ export class RubikaFrontend {
 
     try {
       if (teamSize > 1) {
+        if (this.agentBackend) {
+          await this.replyTo(senderId, chatId, 'Teams are not available in CodexHub v1.')
+          return
+        }
         await this.screenManager!.spawnTeam(name, projectPath, teamSize, undefined, profileName)
         this.activeSessionByUser.set(senderId, name)
         await this.replyTo(senderId, chatId, `Spawned team ${name} (${teamSize} agents) at ${projectPath}${profileName ? ` with profile ${profileName}` : ''} — now active`)
       } else {
-        await this.screenManager!.spawn(name, projectPath, undefined, profileName)
+        if (this.agentBackend) {
+          await this.agentBackend.startSession({ name, path: projectPath, profileName, teamSize: 1 })
+          saveSessions(this.deps.registry.toSaveFormat())
+        } else {
+          await this.screenManager!.spawn(name, projectPath, undefined, profileName)
+        }
         this.activeSessionByUser.set(senderId, name)
         await this.replyTo(senderId, chatId, `Spawned ${name} at ${projectPath}${profileName ? ` with profile ${profileName}` : ''} — now active`)
       }
@@ -1121,7 +1163,9 @@ export class RubikaFrontend {
       await this.replyTo('', chatId, `Session not found: ${name}`)
       return
     }
-    if (this.screenManager!.isManaged(name)) {
+    if (this.agentBackend) {
+      await this.agentBackend.stopSession(name)
+    } else if (this.screenManager!.isManaged(name)) {
       await this.screenManager!.gracefulKill(name)
     } else {
       this.socketServer!.disconnectSession(path)
@@ -1146,9 +1190,13 @@ export class RubikaFrontend {
       await this.replyTo('', chatId, `Session ${name} is still connected. Use /kill to close it first.`)
       return
     }
-    this.screenManager!.forgetManaged(name)
-    this.socketServer!.disconnectSession(path)
-    this.deps.registry.unregister(path)
+    if (this.agentBackend) {
+      await this.agentBackend.removeSession(name)
+    } else {
+      this.screenManager!.forgetManaged(name)
+      this.socketServer!.disconnectSession(path)
+      this.deps.registry.unregister(path)
+    }
     saveSessions(this.deps.registry.toSaveFormat())
     await this.replyTo('', chatId, `Removed ${name} from the list`)
   }
@@ -1455,6 +1503,17 @@ export class RubikaFrontend {
       return
     }
     const path = this.deps.registry.findByName(target)
+    if (path && this.agentBackend) {
+      const raw = await this.agentBackend.peek(path, lines)
+      const stripped = stripAnsi(raw).trimEnd()
+      if (stripped.length === 0) {
+        await this.replyTo(senderId, chatId, `(empty event log for ${target})`)
+        return
+      }
+      const trimmed = tailToCharLimit(stripped, 3500)
+      await this.replyTo(senderId, chatId, `📺 ${target}\n\n${trimmed}`)
+      return
+    }
     const managed = path ? this.screenManager?.getManagedByPath(this.deps.registry.folderPath(path)) : undefined
     const tmuxName = managed?.sessionName ?? `hub-${target}`
     try {

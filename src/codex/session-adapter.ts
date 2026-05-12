@@ -7,6 +7,7 @@ import type { AgentEventLog } from './event-log'
 type CodexClient = {
   request<T = unknown>(method: string, params: unknown): Promise<T>
   onNotification(method: string, cb: (params: any) => void): void
+  onServerRequest?(method: string, cb: (params: any) => Promise<unknown> | unknown): void
 }
 
 type SessionAdapterDeps = {
@@ -18,11 +19,29 @@ type SessionAdapterDeps = {
 }
 
 type ThreadStartResult = {
-  threadId: string
+  threadId?: string
+  thread?: { id?: string }
 }
 
 type TurnStartResult = {
-  turnId: string
+  turnId?: string
+  turn?: { id?: string }
+}
+
+function threadIdFrom(result: ThreadStartResult): string {
+  const id = result.threadId ?? result.thread?.id
+  if (!id) throw new Error('Codex thread/start response did not include a thread id')
+  return id
+}
+
+function turnIdFrom(result: TurnStartResult): string {
+  const id = result.turnId ?? result.turn?.id
+  if (!id) throw new Error('Codex turn/start response did not include a turn id')
+  return id
+}
+
+function textInput(text: string): Array<{ type: 'text'; text: string }> {
+  return [{ type: 'text', text }]
 }
 
 export class CodexSessionAdapter implements AgentSessionBackend {
@@ -35,14 +54,25 @@ export class CodexSessionAdapter implements AgentSessionBackend {
     this.deps.client.onNotification('turn/completed', (params) => this.onTurnCompleted(params))
     this.deps.client.onNotification('item/commandExecution/output', (params) => this.onCommandOutput(params))
     this.deps.client.onNotification('item/fileChange/output', (params) => this.onFileChangeOutput(params))
+    for (const method of [
+      'item/commandExecution/requestApproval',
+      'item/fileChange/requestApproval',
+      'item/permissions/requestApproval',
+      'item/tool/requestUserInput',
+      'mcpServer/elicitation/request',
+    ]) {
+      this.deps.client.onServerRequest?.(method, (params) => this.onApprovalRequest(method, params))
+    }
   }
 
   async startSession(input: StartSessionInput): Promise<StartSessionResult> {
     const sessionPath = this.sessionPathFor(input.path, input.teamSize)
     const result = await this.deps.client.request<ThreadStartResult>('thread/start', {
       cwd: input.path,
-      instructions: input.instructions,
+      developerInstructions: input.instructions,
+      threadSource: 'user',
     })
+    const threadId = threadIdFrom(result)
     const session = this.deps.registry.register(sessionPath, {
       name: input.name,
       trust: input.trust,
@@ -50,11 +80,11 @@ export class CodexSessionAdapter implements AgentSessionBackend {
       teamIndex: this.teamIndexFromSessionPath(sessionPath),
       teamSize: input.teamSize ?? 0,
       appliedProfile: input.profileName,
-      threadId: result.threadId,
+      threadId,
     })
-    this.threadToSessionPath.set(result.threadId, session.path)
-    this.deps.eventLog.append(session.path, { type: 'turn', text: `thread started ${result.threadId}` })
-    return { sessionPath: session.path, threadId: result.threadId }
+    this.threadToSessionPath.set(threadId, session.path)
+    this.deps.eventLog.append(session.path, { type: 'turn', text: `thread started ${threadId}` })
+    return { sessionPath: session.path, threadId }
   }
 
   async resumeSession(input: ResumeSessionInput): Promise<StartSessionResult> {
@@ -64,6 +94,7 @@ export class CodexSessionAdapter implements AgentSessionBackend {
       threadId: input.threadId,
       cwd: input.path,
     })
+    const threadId = threadIdFrom(result)
     const session = this.deps.registry.register(sessionPath, {
       name: input.name,
       trust: input.trust,
@@ -71,11 +102,36 @@ export class CodexSessionAdapter implements AgentSessionBackend {
       teamIndex: this.teamIndexFromSessionPath(sessionPath),
       teamSize: input.teamSize ?? 0,
       appliedProfile: input.profileName,
-      threadId: result.threadId,
+      threadId,
     })
-    this.threadToSessionPath.set(result.threadId, session.path)
-    this.deps.eventLog.append(session.path, { type: 'turn', text: `thread resumed ${result.threadId}` })
-    return { sessionPath: session.path, threadId: result.threadId }
+    this.threadToSessionPath.set(threadId, session.path)
+    this.deps.eventLog.append(session.path, { type: 'turn', text: `thread resumed ${threadId}` })
+    return { sessionPath: session.path, threadId }
+  }
+
+  async restorePersistedSessions(): Promise<number> {
+    let restored = 0
+    for (const session of this.deps.registry.list()) {
+      if (!session.threadId) continue
+      try {
+        const result = await this.deps.client.request<ThreadStartResult>('thread/resume', {
+          threadId: session.threadId,
+          cwd: this.deps.registry.folderPath(session.path),
+        })
+        const threadId = threadIdFrom(result)
+        session.threadId = threadId
+        session.lastTurnId = undefined
+        this.threadToSessionPath.set(threadId, session.path)
+        this.deps.registry.reconnect(session.path)
+        this.deps.eventLog.append(session.path, { type: 'turn', text: `thread restored ${threadId}` })
+        restored++
+      } catch (err) {
+        session.lastTurnId = undefined
+        this.deps.eventLog.append(session.path, { type: 'turn', text: `thread restore failed ${err}` })
+        process.stderr.write(`hub: failed to restore codex session ${session.name}: ${err}\n`)
+      }
+    }
+    return restored
   }
 
   async stopSession(name: string): Promise<void> {
@@ -101,8 +157,8 @@ export class CodexSessionAdapter implements AgentSessionBackend {
     if (session.lastTurnId) {
       await this.deps.client.request('turn/steer', {
         threadId: session.threadId,
-        turnId: session.lastTurnId,
-        message: content,
+        expectedTurnId: session.lastTurnId,
+        input: textInput(content),
       })
       this.deps.eventLog.append(path, { type: 'turn', text: `steered ${session.lastTurnId}` })
       return true
@@ -110,10 +166,10 @@ export class CodexSessionAdapter implements AgentSessionBackend {
 
     const result = await this.deps.client.request<TurnStartResult>('turn/start', {
       threadId: session.threadId,
-      message: content,
+      input: textInput(content),
     })
-    session.lastTurnId = result.turnId
-    this.deps.eventLog.append(path, { type: 'turn', text: `started ${result.turnId}` })
+    session.lastTurnId = turnIdFrom(result)
+    this.deps.eventLog.append(path, { type: 'turn', text: `started ${session.lastTurnId}` })
     return true
   }
 
@@ -140,7 +196,7 @@ export class CodexSessionAdapter implements AgentSessionBackend {
     const sessionPath = this.sessionPathForThread(params.threadId)
     if (!sessionPath) return
     const key = this.itemKey(params)
-    const text = String(params.text ?? this.messageBuffers.get(key) ?? '')
+    const text = String(params.text ?? params.item?.text ?? this.messageBuffers.get(key) ?? '')
     this.messageBuffers.delete(key)
     if (!text) return
     this.deps.deliver(sessionPath, text, Array.isArray(params.files) ? params.files : undefined)
@@ -150,10 +206,11 @@ export class CodexSessionAdapter implements AgentSessionBackend {
     const sessionPath = this.sessionPathForThread(params.threadId)
     if (!sessionPath) return
     const session = this.deps.registry.get(sessionPath)
-    if (session && session.lastTurnId === params.turnId) {
+    const turnId = params.turnId ?? params.turn?.id
+    if (session && session.lastTurnId === turnId) {
       session.lastTurnId = undefined
     }
-    this.deps.eventLog.append(sessionPath, { type: 'turn', text: String(params.status ?? 'completed') })
+    this.deps.eventLog.append(sessionPath, { type: 'turn', text: String(params.status ?? params.turn?.status ?? 'completed') })
   }
 
   private onCommandOutput(params: any): void {
@@ -170,13 +227,20 @@ export class CodexSessionAdapter implements AgentSessionBackend {
     this.deps.eventLog.append(sessionPath, { type: 'file-change', text: `${action} ${path}`.trim() })
   }
 
+  private async onApprovalRequest(method: string, params: any): Promise<unknown> {
+    const sessionPath = this.sessionPathForThread(params.threadId)
+    if (!sessionPath || !this.deps.approvalBridge) return { decision: 'denied' }
+    this.deps.eventLog.append(sessionPath, { type: 'approval', text: method })
+    return this.deps.approvalBridge.handleServerRequest(sessionPath, method, params)
+  }
+
   private sessionPathForThread(threadId: unknown): string | undefined {
     if (typeof threadId !== 'string') return undefined
     return this.threadToSessionPath.get(threadId)
   }
 
   private itemKey(params: any): string {
-    return `${params.threadId ?? ''}:${params.turnId ?? ''}:${params.itemId ?? ''}`
+    return `${params.threadId ?? ''}:${params.turnId ?? ''}:${params.itemId ?? params.item?.id ?? ''}`
   }
 
   private sessionPathFor(projectPath: string, teamSize?: number): string {

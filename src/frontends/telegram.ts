@@ -13,6 +13,7 @@ import type { VerificationRunner, VerificationResult } from '../verification'
 import type { VetoController } from '../veto-controller'
 import type { EscalationController } from '../escalation-controller'
 import type { AutopilotRunner } from '../autopilot'
+import type { AgentSessionBackend } from '../agent-backend'
 import { formatForTelegram, escapeHtml as escapeHtmlText } from '../telegram-format'
 import { stripAnsi, tailToCharLimit, parsePeekArgs } from '../peek-helpers'
 
@@ -180,6 +181,7 @@ export type TelegramFrontendDeps = {
   permissions: PermissionEngine
   screenManager: ScreenManager
   socketServer: SocketServer
+  agentBackend?: AgentSessionBackend
   allowFrom: string[]
   taskMonitor: TaskMonitor | null
   verificationRunner: VerificationRunner
@@ -195,6 +197,7 @@ export class TelegramFrontend {
   private permissions: PermissionEngine
   private screenManager: ScreenManager
   private socketServer: SocketServer
+  private agentBackend?: AgentSessionBackend
   private allowFrom: string[]
   private taskMonitor: TaskMonitor | null
   private verificationRunner: VerificationRunner
@@ -221,6 +224,7 @@ export class TelegramFrontend {
     this.permissions = deps.permissions
     this.screenManager = deps.screenManager
     this.socketServer = deps.socketServer
+    this.agentBackend = deps.agentBackend
     this.allowFrom = deps.allowFrom
     this.taskMonitor = deps.taskMonitor
     this.verificationRunner = deps.verificationRunner
@@ -393,11 +397,20 @@ export class TelegramFrontend {
       try {
         const userId = this.getUserId(ctx)
         if (teamSize > 1) {
+          if (this.agentBackend) {
+            await ctx.reply('Teams are not available in CodexHub v1.')
+            return
+          }
           await this.screenManager.spawnTeam(name, projectPath, teamSize, undefined, profileName)
           this.userActiveSessions.set(userId, name)
           await ctx.reply(`Spawned team ${name} (${teamSize} agents) at ${projectPath}${profileName ? ` with profile ${profileName}` : ''} — now active`)
         } else {
-          await this.screenManager.spawn(name, projectPath, undefined, profileName)
+          if (this.agentBackend) {
+            await this.agentBackend.startSession({ name, path: projectPath, profileName, teamSize: 1 })
+            saveSessions(this.registry.toSaveFormat())
+          } else {
+            await this.screenManager.spawn(name, projectPath, undefined, profileName)
+          }
           this.userActiveSessions.set(userId, name)
           await ctx.reply(`Spawned ${name} at ${projectPath}${profileName ? ` with profile ${profileName}` : ''} — now active`)
         }
@@ -440,8 +453,13 @@ export class TelegramFrontend {
 
       try {
         const userId = this.getUserId(ctx)
-        const resume: ResumeSpec = { mode: 'continue' }
-        await this.screenManager.spawn(name, projectPath, undefined, profileName, resume)
+        if (this.agentBackend) {
+          await this.agentBackend.resumeSession({ name, path: projectPath, profileName })
+          saveSessions(this.registry.toSaveFormat())
+        } else {
+          const resume: ResumeSpec = { mode: 'continue' }
+          await this.screenManager.spawn(name, projectPath, undefined, profileName, resume)
+        }
         this.userActiveSessions.set(userId, name)
         await ctx.reply(`Resumed ${name} at ${projectPath} (latest session)${profileName ? ` with profile ${profileName}` : ''} — now active`)
       } catch (err) {
@@ -505,7 +523,9 @@ export class TelegramFrontend {
         await ctx.reply(`Session not found: ${name}`)
         return
       }
-      if (this.screenManager.isManaged(name)) {
+      if (this.agentBackend) {
+        await this.agentBackend.stopSession(name)
+      } else if (this.screenManager.isManaged(name)) {
         await this.screenManager.gracefulKill(name)
       } else {
         this.socketServer.disconnectSession(path)
@@ -532,9 +552,13 @@ export class TelegramFrontend {
         await ctx.reply(`Session ${name} is still connected. Use /kill to close it first.`)
         return
       }
-      this.screenManager.forgetManaged(name)
-      this.socketServer.disconnectSession(path)
-      this.registry.unregister(path)
+      if (this.agentBackend) {
+        await this.agentBackend.removeSession(name)
+      } else {
+        this.screenManager.forgetManaged(name)
+        this.socketServer.disconnectSession(path)
+        this.registry.unregister(path)
+      }
       saveSessions(this.registry.toSaveFormat())
       await ctx.reply(`Removed ${name} from the list`)
     })
@@ -914,11 +938,15 @@ export class TelegramFrontend {
         const requestId = data.slice('perm:allow:'.length)
         const result = this.permissions.resolve(requestId, 'allow')
         if (result) {
-          this.socketServer.sendToSession(result.sessionPath, {
-            type: 'permission_response',
-            requestId: result.response.requestId,
-            behavior: result.response.behavior,
-          })
+          if (this.agentBackend) {
+            await this.agentBackend.resolveApproval(requestId, 'allow')
+          } else {
+            this.socketServer.sendToSession(result.sessionPath, {
+              type: 'permission_response',
+              requestId: result.response.requestId,
+              behavior: result.response.behavior,
+            })
+          }
           await ctx.answerCallbackQuery('Permission allowed')
           await ctx.editMessageText(`✅ Allowed: ${requestId}`)
         } else {
@@ -928,11 +956,15 @@ export class TelegramFrontend {
         const requestId = data.slice('perm:deny:'.length)
         const result = this.permissions.resolve(requestId, 'deny')
         if (result) {
-          this.socketServer.sendToSession(result.sessionPath, {
-            type: 'permission_response',
-            requestId: result.response.requestId,
-            behavior: result.response.behavior,
-          })
+          if (this.agentBackend) {
+            await this.agentBackend.resolveApproval(requestId, 'deny')
+          } else {
+            this.socketServer.sendToSession(result.sessionPath, {
+              type: 'permission_response',
+              requestId: result.response.requestId,
+              behavior: result.response.behavior,
+            })
+          }
           await ctx.answerCallbackQuery('Permission denied')
           await ctx.editMessageText(`❌ Denied: ${requestId}`)
         } else {
@@ -1234,7 +1266,7 @@ export class TelegramFrontend {
 
     const keyboard = new InlineKeyboard()
       .text('🤐 Ignore', `drift:ignore:${sessionName}`)
-      .text('📣 Remind Claude', `drift:remind:${sessionName}`)
+      .text('📣 Remind Codex', `drift:remind:${sessionName}`)
 
     for (const userId of recipients) {
       try {
@@ -1312,7 +1344,7 @@ export class TelegramFrontend {
       { command: 'list',     description: 'Show all sessions' },
       { command: 'status',   description: 'Dashboard with details' },
       { command: 'spawn',    description: 'Spawn a new session: <name> <path> [--profile <n>] [team-size]' },
-      { command: 'resume',   description: 'Resume latest claude session: <name> <path> [--profile <n>]' },
+      { command: 'resume',   description: 'Resume latest Codex session: <name> <path> [--profile <n>]' },
       { command: 'kill',     description: 'Gracefully end a session: <name>' },
       { command: 'remove',   description: 'Remove a disconnected session from the list: <name>' },
       { command: 'team',     description: 'Show team or add teammate: <name> [add]' },

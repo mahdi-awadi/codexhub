@@ -26,6 +26,10 @@ import { Messages } from './messages'
 import { RubikaFrontend } from './frontends/rubika'
 import { RubikaInviteStore } from './rubika-invites'
 import { BrowserController } from './browser-controller'
+import { CodexAppServerClient, createCodexAppServerTransport } from './codex/app-server-client'
+import { CodexApprovalBridge } from './codex/approval-bridge'
+import { AgentEventLog } from './codex/event-log'
+import { CodexSessionAdapter } from './codex/session-adapter'
 
 const DRIFT_RATE_LIMIT_MS = 2 * 60 * 1000 // 2 minutes between alerts per session
 
@@ -114,6 +118,23 @@ const permissions = new PermissionEngine(registry, (req: PermissionRequest) => {
   telegramFrontend?.deliverPermissionRequest(req)
   webFrontend?.deliverPermissionRequest(req)
   rubikaFrontend?.deliverPermissionRequest(req)
+})
+
+const codexClient = new CodexAppServerClient(createCodexAppServerTransport())
+const codexEventLog = new AgentEventLog()
+const codexApprovalBridge = new CodexApprovalBridge({ registry, permissions })
+const agentBackend = new CodexSessionAdapter({
+  client: codexClient,
+  registry,
+  eventLog: codexEventLog,
+  approvalBridge: codexApprovalBridge,
+  deliver(path, text, files) {
+    const session = registry.get(path)
+    if (!session) return
+    telegramFrontend?.deliverToUser(session.name, text, files)
+    webFrontend?.deliverToUser(session.name, text, files)
+    rubikaFrontend?.deliverToUser(session.name, text, files)
+  },
 })
 
 // Screen manager
@@ -205,11 +226,10 @@ const router = new MessageRouter(
       const frontend = (meta.frontend ?? 'web') as FrontendSource
       enrichedContent = injectContext(content, frontend, effective)
     }
-    return socketServer.sendToSession(path, {
-      type: 'channel_message',
-      content: enrichedContent,
-      meta,
+    agentBackend.send(path, enrichedContent, meta).catch((err) => {
+      process.stderr.write(`hub: codex send failed for ${path}: ${err}\n`)
     })
+    return true
   },
   (sessionName, text, files) => {
     telegramFrontend?.deliverToUser(sessionName, text, files)
@@ -520,8 +540,16 @@ socketServer.on('permission_request', (path: string, msg: any) => {
 
 // Start everything
 async function start(): Promise<void> {
-  await socketServer.start()
-  process.stderr.write(`hub: socket server listening on ${SOCKET_PATH}\n`)
+  await codexClient.request('initialize', {
+    clientInfo: { name: 'codexhub', version: '0.1.0' },
+    capabilities: { experimentalApi: true },
+  })
+  process.stderr.write('hub: codex app-server initialized\n')
+  const restoredCodexSessions = await agentBackend.restorePersistedSessions()
+  if (restoredCodexSessions > 0) {
+    saveSessions(registry.toSaveFormat())
+    process.stderr.write(`hub: restored ${restoredCodexSessions} codex session(s)\n`)
+  }
 
   let telegramBotUsername = config.telegramBotUsername ?? ''
   if (!telegramBotUsername && config.telegramToken) {
@@ -544,6 +572,7 @@ async function start(): Promise<void> {
     permissions,
     socketServer,
     screenManager,
+    agentBackend,
     telegramToken: config.telegramToken,
     telegramBotUsername,
     telegramAllowFrom: config.telegramAllowFrom,
@@ -576,6 +605,7 @@ async function start(): Promise<void> {
         permissions,
         screenManager,
         socketServer,
+        agentBackend,
         allowFrom: config.telegramAllowFrom,
         taskMonitor,
         verificationRunner,
@@ -613,6 +643,7 @@ async function start(): Promise<void> {
         permissions,
         screenManager,
         socketServer,
+        agentBackend,
         taskMonitor,
         verificationRunner,
         vetoController,
@@ -634,9 +665,7 @@ async function start(): Promise<void> {
     process.stderr.write('hub: no rubika token — skipping rubika frontend\n')
   }
 
-  // Permission relay works natively through the MCP channel protocol.
-  // No tmux polling needed — Claude Code sends permission_request notifications
-  // directly to the shim, which forwards them to the daemon.
+  // Permission relay works through Codex App Server approval requests.
 
   process.stderr.write('hub: daemon ready\n')
 }
@@ -645,8 +674,8 @@ async function shutdown(): Promise<void> {
   process.stderr.write('hub: shutting down...\n')
   taskMonitor.stopPolling()
   saveSessions(registry.toSaveFormat())
-  await screenManager.killAll()
-  await socketServer.stop()
+  await agentBackend.shutdown()
+  codexClient.close()
   await webFrontend?.stop()
   await telegramFrontend?.stop()
   if (browserController) {
