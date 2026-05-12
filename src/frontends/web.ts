@@ -323,6 +323,9 @@ export class WebFrontend {
 
         if (url.pathname === '/api/team/add' && req.method === 'POST') {
           return req.json().then(async (body: any) => {
+            if (self.deps.agentBackend) {
+              return new Response('Teams are not available in CodexHub v1.', { status: 400 })
+            }
             const newName = await self.deps.screenManager?.addTeammate(body.leadName)
             if (newName) {
               return Response.json({ ok: true, name: newName })
@@ -1070,7 +1073,7 @@ export class WebFrontend {
         const runner = this.deps.autopilotRunner
         const managed = this.deps.screenManager?.getManagedByPath(this.deps.registry.folderPath(path))
         const tmuxName = managed?.sessionName ?? `hub-${name}`
-        if (runner) {
+        if (runner && !this.deps.agentBackend) {
           // Synchronous fast check — pane state only, no /btw round-trip.
           const quick = await runner.quickProbe(tmuxName)
           if (!quick.ok) {
@@ -1090,10 +1093,9 @@ export class WebFrontend {
           startedAt: existing?.startedAt ?? Date.now(),
         })
         saveSessions(this.deps.registry.toSaveFormat())
-        // Background /btw confirmation — fire and forget. The toggle has already
-        // returned 200 to the caller; if /btw fails we deliver a notice so the
-        // user can decide whether to keep autopilot on.
-        if (runner) {
+        // Legacy tmux sessions get a background /btw confirmation. Codex-backed
+        // sessions use a separate one-shot `codex exec` when a reply arrives.
+        if (runner && !this.deps.agentBackend) {
           runner.probe(tmuxName, 20_000).then(res => {
             if (!res.ok) {
               this.deliverToUser(name, `⚠️ Autopilot enabled but /btw confirmation failed: ${res.reason}`)
@@ -1142,17 +1144,25 @@ export class WebFrontend {
       }
 
       if (action === 'send') {
-        this.deps.socketServer?.sendToSession(path, {
-          type: 'channel_message',
-          content: pending.draft,
-          meta: { source: 'autopilot', frontend: 'web' },
-        })
+        if (this.deps.agentBackend) {
+          await this.deps.agentBackend.send(path, pending.draft, { source: 'autopilot', frontend: 'web', user: 'web-user', session: name })
+        } else {
+          this.deps.socketServer?.sendToSession(path, {
+            type: 'channel_message',
+            content: pending.draft,
+            meta: { source: 'autopilot', frontend: 'web' },
+          })
+        }
       } else if (action === 'edit' && edited && edited.trim()) {
-        this.deps.socketServer?.sendToSession(path, {
-          type: 'channel_message',
-          content: edited,
-          meta: { source: 'autopilot', frontend: 'web' },
-        })
+        if (this.deps.agentBackend) {
+          await this.deps.agentBackend.send(path, edited, { source: 'autopilot', frontend: 'web', user: 'web-user', session: name })
+        } else {
+          this.deps.socketServer?.sendToSession(path, {
+            type: 'channel_message',
+            content: edited,
+            meta: { source: 'autopilot', frontend: 'web' },
+          })
+        }
       }
       // action === 'cancel': no injection, just drop the draft
 
@@ -1222,6 +1232,7 @@ export class WebFrontend {
       // handling via the injection code path.
       const runner = this.deps.autopilotRunner
       if (!runner) return new Response('Autopilot runner not available', { status: 503 })
+      if (this.deps.agentBackend) return new Response('Autopilot is not available for Codex-backed sessions in CodexHub v1.', { status: 400 })
 
       const retryT0 = Date.now()
       runner.runBtw(pending.tmuxName, pending.wrappedQuestion, {

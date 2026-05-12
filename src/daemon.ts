@@ -30,6 +30,7 @@ import { CodexAppServerClient, createCodexAppServerTransport } from './codex/app
 import { CodexApprovalBridge } from './codex/approval-bridge'
 import { AgentEventLog } from './codex/event-log'
 import { CodexSessionAdapter } from './codex/session-adapter'
+import { CodexExecAutopilotRunner } from './codex/exec-autopilot'
 
 const DRIFT_RATE_LIMIT_MS = 2 * 60 * 1000 // 2 minutes between alerts per session
 
@@ -134,6 +135,7 @@ const agentBackend = new CodexSessionAdapter({
     telegramFrontend?.deliverToUser(session.name, text, files)
     webFrontend?.deliverToUser(session.name, text, files)
     rubikaFrontend?.deliverToUser(session.name, text, files)
+    maybeRunAutopilot(path, text, 'codex-exec')
   },
 })
 
@@ -161,6 +163,9 @@ const autopilotRunner = new AutopilotRunner({
   screenManager,
   btwTimeoutMs: autopilotDefaults.btwTimeoutMs,
 })
+const codexExecAutopilotRunner = new CodexExecAutopilotRunner({
+  timeoutMs: autopilotDefaults.btwTimeoutMs,
+})
 
 function loadProjectPreferences(projectPath: string): string {
   const candidates = [
@@ -173,6 +178,143 @@ function loadProjectPreferences(projectPath: string): string {
     } catch { /* ignore */ }
   }
   return ''
+}
+
+function sendAutopilotAnswer(path: string, sessionName: string, answer: string, mode: 'tmux' | 'codex-exec'): void {
+  if (mode === 'codex-exec') {
+    agentBackend.send(path, answer, {
+      source: 'autopilot',
+      frontend: 'web',
+      user: 'autopilot',
+      session: sessionName,
+    }).catch((err) => process.stderr.write(`hub: codex autopilot send failed for ${sessionName}: ${err}\n`))
+    return
+  }
+  socketServer.sendToSession(path, {
+    type: 'channel_message',
+    content: answer,
+    meta: { source: 'autopilot', frontend: 'web' },
+  })
+}
+
+function maybeRunAutopilot(path: string, text: string, mode: 'tmux' | 'codex-exec'): void {
+  const session = registry.get(path)
+  if (!session) return
+  const ap = registry.getAutopilot(path)
+  if (!ap?.enabled) return
+
+  if (isTrivialReply(text)) {
+    process.stderr.write(`hub: autopilot ${session.name} skip — trivial reply ${JSON.stringify(text.slice(0, 40))}\n`)
+    return
+  }
+
+  const sessionName = session.name
+  const projectPath = registry.folderPath(path)
+  const managed = screenManager.getManagedByPath(projectPath)
+  const tmuxName = managed?.sessionName ?? `hub-${sessionName}`
+  const prefs = loadProjectPreferences(projectPath)
+  const personality = personalities.getForSession(path)
+  const wrapped = wrapQuestion(text, prefs, personality
+    ? { name: personality.name, systemPrompt: personality.systemPrompt }
+    : undefined)
+  const riskKeywords = ap.riskKeywords ?? autopilotDefaults.riskKeywords
+  const apT0 = Date.now()
+  const run = mode === 'codex-exec'
+    ? codexExecAutopilotRunner.run(projectPath, wrapped, {
+      rawQuestion: text,
+      riskKeywords,
+      riskOverride: ap.riskOverride,
+    })
+    : autopilotRunner.runBtw(tmuxName, wrapped, {
+      rawQuestion: text,
+      riskKeywords,
+      riskOverride: ap.riskOverride,
+    })
+
+  run.then(result => {
+    const elapsed = Date.now() - apT0
+    process.stderr.write(`hub: autopilot ${sessionName} ${mode} ${elapsed}ms status=${result.status}${result.status === 'answered' ? ` length=${result.answer.length}` : ''}\n`)
+    if (result.status !== 'answered') {
+      const reasonKind = result.status === 'escalate'
+        ? (/risk keyword/i.test(result.reason) ? 'risk' : 'escalate' as const)
+        : result.status
+      try {
+        errorLog.record({
+          ts: Date.now(),
+          sessionName,
+          sessionPath: path,
+          status: reasonKind === 'escalate' ? 'escalate' : reasonKind === 'risk' ? 'risk' : reasonKind,
+          reason: result.status === 'escalate' ? result.reason : `${mode} ${result.status}`,
+          rawQuestion: text,
+          wrappedQuestion: wrapped,
+          capturedPane: result.pane,
+          durationMs: elapsed,
+        })
+      } catch (err) {
+        process.stderr.write(`hub: error-log record failed for ${sessionName}: ${err}\n`)
+      }
+    }
+
+    if (result.status === 'answered') {
+      let decisionId: number | undefined
+      try {
+        decisionId = decisions.record({
+          ts: Date.now(),
+          sessionName,
+          sessionPath: path,
+          personalityId: personality?.id,
+          personalityName: personality?.name,
+          rawQuestion: text,
+          answer: result.answer,
+          durationMs: elapsed,
+        })
+      } catch (err) {
+        process.stderr.write(`hub: decisions.record failed for ${sessionName}: ${err}\n`)
+      }
+      const vetoMs = ap.vetoWindowMs ?? autopilotDefaults.vetoWindowMs
+      if (vetoMs > 0) {
+        const veto = vetoController.schedule(path, sessionName, result.answer, vetoMs, (v) => {
+          sendAutopilotAnswer(v.path, v.sessionName, v.draft, mode)
+          telegramFrontend?.deliverToUser(v.sessionName, `🤖 Autopilot sent: ${v.draft}`)
+          webFrontend?.deliverToUser(v.sessionName, `🤖 Autopilot sent: ${v.draft}`)
+          rubikaFrontend?.deliverToUser(v.sessionName, `🤖 Autopilot sent: ${v.draft}`)
+        }, decisionId)
+        telegramFrontend?.deliverAutopilotDraft(sessionName, veto.draft, vetoMs)
+        webFrontend?.deliverAutopilotDraft(path, sessionName, veto.draft, vetoMs)
+        rubikaFrontend?.deliverAutopilotDraft(sessionName, veto.draft)
+      } else {
+        sendAutopilotAnswer(path, sessionName, result.answer, mode)
+        telegramFrontend?.deliverToUser(sessionName, `🤖 Autopilot answered: ${result.answer}`)
+        webFrontend?.deliverToUser(sessionName, `🤖 Autopilot answered: ${result.answer}`)
+        rubikaFrontend?.deliverToUser(sessionName, `🤖 Autopilot answered: ${result.answer}`)
+      }
+    } else if (result.status === 'escalate') {
+      const reasonKind = /risk keyword/i.test(result.reason) ? 'risk'
+        : /^proxy escalated/i.test(result.reason) ? 'escalate_token'
+        : 'other'
+      escalationController.record({
+        path, sessionName, rawQuestion: text, wrappedQuestion: wrapped,
+        tmuxName: mode === 'codex-exec' ? `codex-exec:${sessionName}` : tmuxName,
+        reason: result.reason, reasonKind, createdAt: Date.now(),
+      })
+      telegramFrontend?.deliverToUser(sessionName, `🟡 Autopilot escalated: ${result.reason}`)
+      rubikaFrontend?.deliverToUser(sessionName, `🟡 Autopilot escalated: ${result.reason}`)
+      webFrontend?.deliverAutopilotEscalation?.(path, sessionName, text, result.reason, reasonKind)
+    } else {
+      const kind: 'parse_error' | 'timeout' = result.status
+      escalationController.record({
+        path, sessionName, rawQuestion: text, wrappedQuestion: wrapped,
+        tmuxName: mode === 'codex-exec' ? `codex-exec:${sessionName}` : tmuxName,
+        reason: `${result.status}: ${mode} did not complete`, reasonKind: kind,
+        createdAt: Date.now(),
+      })
+      telegramFrontend?.deliverToUser(sessionName, `🟡 Autopilot failed (${result.status}); please answer directly.`)
+      rubikaFrontend?.deliverToUser(sessionName, `🟡 Autopilot failed (${result.status}); please answer directly.`)
+      webFrontend?.deliverAutopilotEscalation?.(path, sessionName, text, `autopilot ${mode} failed (${result.status})`, kind)
+    }
+  }).catch(err => {
+    process.stderr.write(`hub: autopilot error for ${sessionName}: ${err}\n`)
+  })
 }
 
 // Task monitor
@@ -318,133 +460,7 @@ socketServer.on('tool_call', (path: string, name: string, args: Record<string, u
         }
       }
     }
-    // Autopilot: if this session is in autopilot mode, proxy the user's answer
-    // via /btw instead of waiting for a human.
-    const ap = registry.getAutopilot(path)
-    if (ap?.enabled) {
-      // Skip trivial replies — pure emoji acknowledgements like 👍 carry no
-      // question, but the daemon used to dutifully fire /btw on them, get an
-      // ack-shaped answer, deliver it back to the session, and the session
-      // would 👍 again, and so on indefinitely. The ap-test session got
-      // wedged in this loop on 2026-04-27 (errors.sqlite #20-#21). Bail
-      // before doing any work — no decision row, no toast, no escalation.
-      if (isTrivialReply(text)) {
-        process.stderr.write(`hub: autopilot ${session.name} skip — trivial reply ${JSON.stringify(text.slice(0, 40))}\n`)
-        return
-      }
-      // Duration cap removed — autopilot runs as long as the user keeps it on.
-      // The user disables it explicitly via the toggle when they want to take
-      // back control; we don't pull the rug at an arbitrary time threshold.
-      const sessionName = session.name
-      const managed = screenManager.getManagedByPath(registry.folderPath(path))
-      const tmuxName = managed?.sessionName ?? `hub-${sessionName}`
-      const prefs = loadProjectPreferences(registry.folderPath(path))
-      // If this session has a personality assigned, splice its system_prompt
-      // into the wrap. Falls back to the default constraint block otherwise.
-      const personality = personalities.getForSession(path)
-      const wrapped = wrapQuestion(text, prefs, personality
-        ? { name: personality.name, systemPrompt: personality.systemPrompt }
-        : undefined)
-      const riskKeywords = ap.riskKeywords ?? autopilotDefaults.riskKeywords
-      const apT0 = Date.now()
-      autopilotRunner.runBtw(tmuxName, wrapped, {
-        rawQuestion: text,
-        riskKeywords,
-        riskOverride: ap.riskOverride,
-      }).then(result => {
-        const elapsed = Date.now() - apT0
-        process.stderr.write(`hub: autopilot ${sessionName} ${elapsed}ms status=${result.status}${result.status === 'answered' ? ` length=${result.answer.length}` : ''}\n`)
-        // Log every non-answered outcome to SQLite so the user can see WHY
-        // /btw didn't deliver — captured pane is the most useful field.
-        if (result.status !== 'answered') {
-          const reasonKind = result.status === 'escalate'
-            ? (/risk keyword/i.test(result.reason) ? 'risk' : 'escalate' as const)
-            : result.status
-          try {
-            errorLog.record({
-              ts: Date.now(),
-              sessionName,
-              sessionPath: path,
-              status: reasonKind === 'escalate' ? 'escalate' : reasonKind === 'risk' ? 'risk' : reasonKind,
-              reason: result.status === 'escalate' ? result.reason : `/btw ${result.status}`,
-              rawQuestion: text,
-              wrappedQuestion: wrapped,
-              capturedPane: result.pane,
-              durationMs: elapsed,
-            })
-          } catch (err) {
-            process.stderr.write(`hub: error-log record failed for ${sessionName}: ${err}\n`)
-          }
-        }
-        if (result.status === 'answered') {
-          // Audit trail — the autopilot actually answered, log it. Failure
-          // outcomes already go to errorLog above; this complements that.
-          let decisionId: number | undefined
-          try {
-            decisionId = decisions.record({
-              ts: Date.now(),
-              sessionName,
-              sessionPath: path,
-              personalityId: personality?.id,
-              personalityName: personality?.name,
-              rawQuestion: text,
-              answer: result.answer,
-              durationMs: elapsed,
-            })
-          } catch (err) {
-            process.stderr.write(`hub: decisions.record failed for ${sessionName}: ${err}\n`)
-          }
-          const vetoMs = ap.vetoWindowMs ?? autopilotDefaults.vetoWindowMs
-          if (vetoMs > 0) {
-            const veto = vetoController.schedule(path, sessionName, result.answer, vetoMs, (v) => {
-              socketServer.sendToSession(v.path, {
-                type: 'channel_message',
-                content: v.draft,
-                meta: { source: 'autopilot', frontend: 'web' },
-              })
-              telegramFrontend?.deliverToUser(v.sessionName, `🤖 Autopilot sent: ${v.draft}`)
-              webFrontend?.deliverToUser(v.sessionName, `🤖 Autopilot sent: ${v.draft}`)
-              rubikaFrontend?.deliverToUser(v.sessionName, `🤖 Autopilot sent: ${v.draft}`)
-            }, decisionId)
-            telegramFrontend?.deliverAutopilotDraft(sessionName, veto.draft, vetoMs)
-            webFrontend?.deliverAutopilotDraft(path, sessionName, veto.draft, vetoMs)
-            rubikaFrontend?.deliverAutopilotDraft(sessionName, veto.draft)
-          } else {
-            socketServer.sendToSession(path, {
-              type: 'channel_message',
-              content: result.answer,
-              meta: { source: 'autopilot', frontend: 'web' },
-            })
-            telegramFrontend?.deliverToUser(sessionName, `🤖 Autopilot answered: ${result.answer}`)
-            webFrontend?.deliverToUser(sessionName, `🤖 Autopilot answered: ${result.answer}`)
-            rubikaFrontend?.deliverToUser(sessionName, `🤖 Autopilot answered: ${result.answer}`)
-          }
-        } else if (result.status === 'escalate') {
-          const reasonKind = /risk keyword/i.test(result.reason) ? 'risk'
-            : /^proxy escalated/i.test(result.reason) ? 'escalate_token'
-            : 'other'
-          escalationController.record({
-            path, sessionName, rawQuestion: text, wrappedQuestion: wrapped,
-            tmuxName, reason: result.reason, reasonKind, createdAt: Date.now(),
-          })
-          telegramFrontend?.deliverToUser(sessionName, `🟡 Autopilot escalated: ${result.reason}`)
-          rubikaFrontend?.deliverToUser(sessionName, `🟡 Autopilot escalated: ${result.reason}`)
-          webFrontend?.deliverAutopilotEscalation?.(path, sessionName, text, result.reason, reasonKind)
-        } else {
-          const kind: 'parse_error' | 'timeout' = result.status
-          escalationController.record({
-            path, sessionName, rawQuestion: text, wrappedQuestion: wrapped,
-            tmuxName, reason: `${result.status}: /btw did not complete`, reasonKind: kind,
-            createdAt: Date.now(),
-          })
-          telegramFrontend?.deliverToUser(sessionName, `🟡 Autopilot failed (${result.status}); please answer directly.`)
-          rubikaFrontend?.deliverToUser(sessionName, `🟡 Autopilot failed (${result.status}); please answer directly.`)
-          webFrontend?.deliverAutopilotEscalation?.(path, sessionName, text, `autopilot /btw failed (${result.status})`, kind)
-        }
-      }).catch(err => {
-        process.stderr.write(`hub: autopilot error for ${sessionName}: ${err}\n`)
-      })
-    }
+    maybeRunAutopilot(path, text, 'tmux')
   } else if (name === 'edit_message') {
     telegramFrontend?.deliverToUser(session.name, `(edited) ${args.text as string}`)
     webFrontend?.deliverToUser(session.name, `(edited) ${args.text as string}`)

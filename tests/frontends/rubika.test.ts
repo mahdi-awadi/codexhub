@@ -120,6 +120,31 @@ function makeFrontend() {
   return { r, registry, router, sender, permissions, socketServer, vetoController, autopilotRunner, screenManager, verificationRunner }
 }
 
+function makeAgentBackend() {
+  const starts: StartSessionInput[] = []
+  const sends: Array<{ path: string; content: string; meta: any }> = []
+  const backend: AgentSessionBackend = {
+    async startSession(input) {
+      starts.push(input)
+      return { sessionPath: `${input.path}:0`, threadId: 'thread_1' }
+    },
+    async resumeSession(input) {
+      starts.push(input)
+      return { sessionPath: `${input.path}:0`, threadId: input.threadId ?? 'thread_1' }
+    },
+    async stopSession() {},
+    async removeSession() {},
+    async send(path, content, meta) {
+      sends.push({ path, content, meta })
+      return true
+    },
+    async resolveApproval() {},
+    async peek() { return 'codex event log' },
+    async shutdown() {},
+  }
+  return { backend, starts, sends }
+}
+
 describe('deriveWebhookSecret', () => {
   test('is deterministic for the same token', () => {
     expect(deriveWebhookSecret('abc')).toBe(deriveWebhookSecret('abc'))
@@ -993,6 +1018,20 @@ describe('cmdSpawn / cmdKill / cmdRemove / cmdRename', () => {
     expect(screenManager.spawnTeamCalls[0]).toEqual(['alpha', '/home/foo', 3, undefined, undefined])
   })
 
+  test('/spawn team rejects when AgentSessionBackend is configured', async () => {
+    const { r, sender, screenManager } = makeFrontend()
+    const { backend, starts } = makeAgentBackend()
+    ;(r as any).agentBackend = backend
+
+    r.handleWebhook(update('u1', '/spawn alpha /home/foo 3'))
+    await new Promise(rs => setTimeout(rs, 5))
+
+    expect(starts).toEqual([])
+    expect(screenManager.spawnTeamCalls).toEqual([])
+    const body = sender.calls.find(c => c.method === 'sendMessage')?.body as any
+    expect(body.text).toContain('Teams are not available in CodexHub v1')
+  })
+
   test('/resume with no args replies with usage', async () => {
     const { r, sender } = makeFrontend()
     r.handleWebhook(update('u1', '/resume'))
@@ -1124,6 +1163,19 @@ describe('cmdTeam', () => {
     expect(screenManager.addTeammateCalls).toEqual(['lead'])
     const body = sender.calls.find(c => c.method === 'sendMessage')?.body as any
     expect(body.text).toContain('Added teammate: lead-1')
+  })
+
+  test('/team <name> add rejects when AgentSessionBackend is configured', async () => {
+    const { r, sender, screenManager } = makeFrontend()
+    const { backend } = makeAgentBackend()
+    ;(r as any).agentBackend = backend
+
+    r.handleWebhook(update('u1', '/team lead add'))
+    await new Promise(rs => setTimeout(rs, 5))
+
+    expect(screenManager.addTeammateCalls).toEqual([])
+    const body = sender.calls.find(c => c.method === 'sendMessage')?.body as any
+    expect(body.text).toContain('Teams are not available in CodexHub v1')
   })
 })
 
@@ -1296,6 +1348,43 @@ describe('cmdAutopilot', () => {
     const body = sender.calls.find(c => c.method === 'sendMessage')?.body as any
     expect(body.text).toContain('Autopilot precheck failed: tmux session not found')
     expect(registry.getAutopilot('/p/foo:0')?.enabled).not.toBe(true)
+  })
+
+  test('/autopilot foo on enables without tmux precheck when AgentSessionBackend is configured', async () => {
+    const { r, registry, sender, autopilotRunner } = makeFrontend()
+    const { backend } = makeAgentBackend()
+    ;(r as any).agentBackend = backend
+    registry.register('/p/foo:0', { name: 'foo' })
+    autopilotRunner.nextQuickProbe = { ok: false, reason: 'tmux session not found' }
+
+    r.handleWebhook(update('u1', '/autopilot foo on'))
+    await new Promise(rs => setTimeout(rs, 10))
+
+    expect(registry.getAutopilot('/p/foo:0')?.enabled).toBe(true)
+    expect(registry.get('/p/foo:0')?.trust).toBe('auto')
+    const body = sender.calls.find(c => c.method === 'sendMessage')?.body as any
+    expect(body.text).toContain('Autopilot ON for foo')
+  })
+})
+
+describe('cmdBtw with AgentSessionBackend', () => {
+  test('/btw sends the question to Codex backend instead of tmux autopilot', async () => {
+    const { r, registry, sender } = makeFrontend()
+    const { backend, sends } = makeAgentBackend()
+    ;(r as any).agentBackend = backend
+    registry.register('/p/foo:0', { name: 'foo' })
+    ;(r as any).activeSessionByUser.set('u1', 'foo')
+
+    r.handleWebhook(update('u1', '/btw say hi back'))
+    await new Promise(rs => setTimeout(rs, 10))
+
+    expect(sends).toEqual([{
+      path: '/p/foo:0',
+      content: 'say hi back',
+      meta: { source: 'hub', frontend: 'rubika', user: 'u1', session: 'foo' },
+    }])
+    const body = sender.calls.find(c => c.method === 'sendMessage')?.body as any
+    expect(body.text).toContain('Sent to foo')
   })
 })
 

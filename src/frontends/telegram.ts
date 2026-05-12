@@ -479,6 +479,10 @@ export class TelegramFrontend {
       const action = args[1]
 
       if (action === 'add') {
+        if (this.agentBackend) {
+          await ctx.reply('Teams are not available in CodexHub v1.')
+          return
+        }
         const newName = await this.screenManager.addTeammate(teamName)
         if (newName) {
           await ctx.reply(`Added teammate: ${newName}`)
@@ -622,7 +626,7 @@ export class TelegramFrontend {
         const runner = this.autopilotRunner
         const managed = this.screenManager?.getManagedByPath(this.registry.folderPath(path))
         const tmuxName = managed?.sessionName ?? `hub-${name}`
-        if (runner) {
+        if (runner && !this.agentBackend) {
           const quick = await runner.quickProbe(tmuxName)
           if (!quick.ok) {
             await ctx.reply(`Autopilot precheck failed: ${quick.reason}`)
@@ -642,9 +646,9 @@ export class TelegramFrontend {
           startedAt: existing?.startedAt ?? Date.now(),
         })
         saveSessions(this.registry.toSaveFormat())
-        // Background /btw confirmation — fire and forget. /autopilot has already
-        // ack'd; if /btw fails we send a follow-up notice.
-        if (runner) {
+        // Legacy tmux sessions get a background /btw confirmation. Codex-backed
+        // sessions use a separate one-shot `codex exec` when a reply arrives.
+        if (runner && !this.agentBackend) {
           runner.probe(tmuxName, 20_000).then(res => {
             if (!res.ok) {
               this.deliverToUser(name, `⚠️ Autopilot on but /btw confirmation failed: ${res.reason}`)
@@ -694,6 +698,16 @@ export class TelegramFrontend {
         await ctx.reply(`Session "${activeSession}" not found`)
         return
       }
+      if (this.agentBackend) {
+        const sent = await this.agentBackend.send(path, question, {
+          source: 'hub',
+          frontend: 'telegram',
+          user: userId,
+          session: activeSession,
+        })
+        await ctx.reply(sent ? `Sent to ${activeSession}.` : `Session "${activeSession}" is not active.`)
+        return
+      }
       const managed = this.screenManager?.getManagedByPath(this.registry.folderPath(path))
       const tmuxName = managed?.sessionName ?? `hub-${activeSession}`
 
@@ -734,6 +748,11 @@ export class TelegramFrontend {
         return
       }
       const path = this.registry.findByName(sessionName)
+      if (path && this.agentBackend) {
+        const pane = await this.agentBackend.peek(path, lines)
+        await ctx.reply(`📺 <b>${sessionName}</b>\n<pre>${pane.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`, { parse_mode: 'HTML' })
+        return
+      }
       const managed = path ? this.screenManager.getManagedByPath(this.registry.folderPath(path)) : undefined
       const tmuxName = managed?.sessionName ?? `hub-${sessionName}`
       try {
@@ -986,11 +1005,15 @@ export class TelegramFrontend {
             const reminder =
               `⚠️ Project rule reminder: ${rules.slice(0, 2).join('; ')}. ` +
               `Please re-do your last action without shortcuts, root-causing the issue instead.`
-            this.socketServer.sendToSession(path, {
-              type: 'channel_message',
-              content: reminder,
-              meta: { source: 'hub', frontend: 'telegram', user: 'drift-check', session: sessionName },
-            })
+            if (this.agentBackend) {
+              await this.agentBackend.send(path, reminder, { source: 'hub', frontend: 'telegram', user: 'drift-check', session: sessionName })
+            } else {
+              this.socketServer.sendToSession(path, {
+                type: 'channel_message',
+                content: reminder,
+                meta: { source: 'hub', frontend: 'telegram', user: 'drift-check', session: sessionName },
+              })
+            }
             await ctx.answerCallbackQuery({ text: 'Reminder sent' })
             await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {})
           }
@@ -1012,11 +1035,15 @@ export class TelegramFrontend {
             return
           }
           if (apAction === 'send') {
-            this.socketServer.sendToSession(path, {
-              type: 'channel_message',
-              content: pending.draft,
-              meta: { source: 'autopilot', frontend: 'telegram' },
-            })
+            if (this.agentBackend) {
+              await this.agentBackend.send(path, pending.draft, { source: 'autopilot', frontend: 'telegram', user: 'telegram-user', session: sessionName })
+            } else {
+              this.socketServer.sendToSession(path, {
+                type: 'channel_message',
+                content: pending.draft,
+                meta: { source: 'autopilot', frontend: 'telegram' },
+              })
+            }
             await ctx.answerCallbackQuery({ text: 'Sent' })
             await ctx.editMessageText(
               `[${sessionName}] ✅ Autopilot draft sent:\n${pending.draft}`,
@@ -1078,12 +1105,13 @@ export class TelegramFrontend {
         }
         writeFileSync(destPath, buf)
 
-        // Notify Claude via channel
-        this.socketServer.sendToSession(path, {
-          type: 'channel_message',
-          content: caption ? `${caption}\n\n[Photo uploaded: ${destPath}]` : `[Photo uploaded: ${destPath}]`,
-          meta: { source: 'hub', frontend: 'telegram', user: ctx.from!.username ?? String(ctx.from!.id), session: activeName, image_path: destPath },
-        })
+        const content = caption ? `${caption}\n\n[Photo uploaded: ${destPath}]` : `[Photo uploaded: ${destPath}]`
+        const meta = { source: 'hub', frontend: 'telegram', user: ctx.from!.username ?? String(ctx.from!.id), session: activeName, image_path: destPath }
+        if (this.agentBackend) {
+          await this.agentBackend.send(path, content, meta)
+        } else {
+          this.socketServer.sendToSession(path, { type: 'channel_message', content, meta })
+        }
 
         await ctx.reply(`📷 Uploaded to ${activeName}:${session.uploadDir}/${fileName}`)
       } catch (err) {
@@ -1138,12 +1166,13 @@ export class TelegramFrontend {
         }
         writeFileSync(destPath, buf)
 
-        // Notify Claude via channel
-        this.socketServer.sendToSession(path, {
-          type: 'channel_message',
-          content: caption ? `${caption}\n\n[File uploaded: ${destPath}]` : `[File uploaded: ${destPath}]`,
-          meta: { source: 'hub', frontend: 'telegram', user: ctx.from!.username ?? String(ctx.from!.id), session: activeName },
-        })
+        const content = caption ? `${caption}\n\n[File uploaded: ${destPath}]` : `[File uploaded: ${destPath}]`
+        const meta = { source: 'hub', frontend: 'telegram', user: ctx.from!.username ?? String(ctx.from!.id), session: activeName }
+        if (this.agentBackend) {
+          await this.agentBackend.send(path, content, meta)
+        } else {
+          this.socketServer.sendToSession(path, { type: 'channel_message', content, meta })
+        }
 
         await ctx.reply(`📄 Uploaded ${fileName} to ${activeName}:${session.uploadDir}/`)
       } catch (err) {

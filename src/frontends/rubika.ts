@@ -719,7 +719,7 @@ export class RubikaFrontend {
       if (buttonId.startsWith('perm:allow:') || buttonId.startsWith('perm:deny:')) {
         const isAllow = buttonId.startsWith('perm:allow:')
         const requestId = buttonId.slice(isAllow ? 'perm:allow:'.length : 'perm:deny:'.length)
-        if (!this.permissions || !this.socketServer) return
+        if (!this.permissions) return
         const result = this.permissions.resolve(requestId, isAllow ? 'allow' : 'deny')
         if (result && this.agentBackend) {
           this.agentBackend.resolveApproval(requestId, isAllow ? 'allow' : 'deny')
@@ -740,12 +740,17 @@ export class RubikaFrontend {
         if (!path || !this.vetoController) return
         const pending = this.vetoController.cancel(path)
         if (!pending) return
-        if (action === 'send' && this.socketServer) {
-          this.socketServer.sendToSession(path, {
-            type: 'channel_message',
-            content: pending.draft,
-            meta: { source: 'autopilot', frontend: 'rubika' },
-          })
+        if (action === 'send') {
+          if (this.agentBackend) {
+            this.agentBackend.send(path, pending.draft, { source: 'autopilot', frontend: 'rubika', user: 'rubika-user', session: sessionName })
+              .catch((err) => process.stderr.write(`rubika: codex autopilot send failed: ${err}\n`))
+          } else if (this.socketServer) {
+            this.socketServer.sendToSession(path, {
+              type: 'channel_message',
+              content: pending.draft,
+              meta: { source: 'autopilot', frontend: 'rubika' },
+            })
+          }
         }
         return
       }
@@ -754,17 +759,22 @@ export class RubikaFrontend {
         const [, action, sessionName] = driftMatch
         if (action === 'ignore') return
         const path = this.deps.registry.findByName(sessionName)
-        if (!path || !this.socketServer) return
+        if (!path) return
         const profiles = loadProfilesForHub()
         const rules = this.deps.registry.getEffectiveRules(path, profiles)
         const reminder =
           `⚠️ Project rule reminder: ${rules.slice(0, 2).join('; ')}. ` +
           `Please re-do your last action without shortcuts, root-causing the issue instead.`
-        this.socketServer.sendToSession(path, {
-          type: 'channel_message',
-          content: reminder,
-          meta: { source: 'hub', frontend: 'rubika', user: 'drift-check', session: sessionName },
-        })
+        if (this.agentBackend) {
+          this.agentBackend.send(path, reminder, { source: 'hub', frontend: 'rubika', user: 'drift-check', session: sessionName })
+            .catch((err) => process.stderr.write(`rubika: codex drift reminder failed: ${err}\n`))
+        } else {
+          this.socketServer?.sendToSession(path, {
+            type: 'channel_message',
+            content: reminder,
+            meta: { source: 'hub', frontend: 'rubika', user: 'drift-check', session: sessionName },
+          })
+        }
         return
       }
       const restartMatch = buttonId.match(/^restart:(drain|keep):(.+)$/)
@@ -1121,6 +1131,10 @@ export class RubikaFrontend {
     const action = args[1]
 
     if (action === 'add') {
+      if (this.agentBackend) {
+        await this.replyTo('', chatId, 'Teams are not available in CodexHub v1.')
+        return
+      }
       const newName = await this.screenManager!.addTeammate(teamName)
       if (newName) {
         await this.replyTo('', chatId, `Added teammate: ${newName}`)
@@ -1281,7 +1295,7 @@ export class RubikaFrontend {
       const runner = this.autopilotRunner
       const managed = this.screenManager?.getManagedByPath(this.deps.registry.folderPath(path))
       const tmuxName = managed?.sessionName ?? `hub-${name}`
-      if (runner) {
+      if (runner && !this.agentBackend) {
         const quick = await runner.quickProbe(tmuxName)
         if (!quick.ok) {
           await this.replyTo('', chatId, `Autopilot precheck failed: ${quick.reason}`)
@@ -1300,7 +1314,7 @@ export class RubikaFrontend {
         startedAt: existing?.startedAt ?? Date.now(),
       })
       saveSessions(this.deps.registry.toSaveFormat())
-      if (runner) {
+      if (runner && !this.agentBackend) {
         runner.probe(tmuxName, 20_000).then(res => {
           if (!res.ok) {
             this.deliverToUser(name, `⚠️ Autopilot on but /btw confirmation failed: ${res.reason}`)
@@ -1466,6 +1480,16 @@ export class RubikaFrontend {
       await this.replyTo(senderId, chatId, `Session "${target}" not found`)
       return
     }
+    if (this.agentBackend) {
+      const sent = await this.agentBackend.send(path, question, {
+        source: 'hub',
+        frontend: 'rubika',
+        user: senderId,
+        session: target,
+      })
+      await this.replyTo(senderId, chatId, sent ? `Sent to ${target}.` : `Session "${target}" is not active.`)
+      return
+    }
     const managed = this.screenManager?.getManagedByPath(this.deps.registry.folderPath(path))
     const tmuxName = managed?.sessionName ?? `hub-${target}`
 
@@ -1604,14 +1628,21 @@ export class RubikaFrontend {
     const isImage = file.type === 'Image'
     const label = isImage ? 'Photo uploaded' : 'File uploaded'
     const content = caption ? `${caption}\n\n[${label}: ${target}]` : `[${label}: ${target}]`
-    const meta: Record<string, string> = {
+    const meta = {
       source: 'hub',
-      frontend: 'rubika',
+      frontend: 'rubika' as const,
       user: senderId,
       session: sessionName,
     }
-    if (isImage) meta.image_path = target
-    this.socketServer?.sendToSession(registryKey, { type: 'channel_message', content, meta })
+    if (this.agentBackend) {
+      await this.agentBackend.send(registryKey, content, meta)
+    } else {
+      this.socketServer?.sendToSession(registryKey, {
+        type: 'channel_message',
+        content,
+        meta: isImage ? { ...meta, image_path: target } : meta,
+      })
+    }
 
     await this.send('sendMessage', { chat_id: chatId, text: `📎 Saved ${path.relative(folderPath, target)}` })
   }

@@ -342,7 +342,7 @@ Click the "Autopilot" toggle in the session row
 bun run src/cli.ts autopilot myproject on
 ```
 
-When autopilot is on, the daemon fires `/btw` inside the session on every user-facing question (from Telegram, Web, or CLI). The proxy answers using the session's conversation context plus preferences in `autopilot.md`. See `skills/autopilot/SKILL.md` for setup details.
+When autopilot is on, the daemon answers user-facing questions automatically. Legacy tmux sessions use the in-session `/btw` side question; Codex-backed sessions run a one-shot `codex exec` in the same project directory and send the printed answer back to the live session. The proxy answers using the project context plus preferences in `autopilot.md`. See `skills/autopilot/SKILL.md` for setup details.
 
 Risk gates: answers containing risk keywords (`delete`, `force push`, `production`, etc.) or marked with `ESCALATE:` are escalated to you on Telegram/Web. Default veto window is 30 seconds — you can review the draft answer and Send, Edit, or Cancel before it's auto-sent.
 
