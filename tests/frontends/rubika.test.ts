@@ -1893,6 +1893,7 @@ describe('inbound file save (Task 15)', () => {
     const tmpDir = mkdtempSync(joinPath(tmpdir(), 'rubika-test-'))
     try {
       const { r, registry, sender } = makeFrontend()
+      ;(r as any).downloadBackoffsMs = [0, 0, 0, 0]
       registry.register(`${tmpDir}:0`, { name: 'sap' })
 
       // getFile returns a download_url but the HTTP fetch fails
@@ -1916,6 +1917,53 @@ describe('inbound file save (Task 15)', () => {
         )
         expect(errReply).toBeDefined()
         expect((errReply!.body as any).text).toContain('503')
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  test('inbound file retries transient download 502 and saves after recovery', async () => {
+    const tmpDir = mkdtempSync(joinPath(tmpdir(), 'rubika-test-'))
+    try {
+      const { r, registry, sender } = makeFrontend()
+      ;(r as any).downloadBackoffsMs = [0, 0, 0, 0]
+      registry.register(`${tmpDir}:0`, { name: 'sap' })
+
+      sender.reply = { download_url: 'https://cdn.rubika.ir/file123' }
+      const originalFetch = globalThis.fetch
+      let attempts = 0
+      globalThis.fetch = (async () => {
+        attempts += 1
+        if (attempts < 3) {
+          return {
+            ok: false,
+            status: 502,
+            arrayBuffer: async () => new ArrayBuffer(0),
+          } as unknown as Response
+        }
+        const body = Buffer.from('after retry')
+        return {
+          ok: true,
+          arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+        } as unknown as Response
+      }) as unknown as typeof fetch
+
+      try {
+        r.handleWebhook(fileUpdate('u1', 'file123', 'retry.txt'))
+        await new Promise(rs => setTimeout(rs, 30))
+
+        expect(attempts).toBe(3)
+        const fs = await import('node:fs/promises')
+        const written = await fs.readFile(joinPath(tmpDir, 'retry.txt'))
+        expect(written.toString()).toBe('after retry')
+
+        const savedReply = sender.calls.find(
+          c => c.method === 'sendMessage' && (c.body as any).text?.includes('📎 Saved'),
+        )
+        expect(savedReply).toBeDefined()
       } finally {
         globalThis.fetch = originalFetch
       }

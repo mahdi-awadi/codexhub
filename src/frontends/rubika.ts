@@ -1615,13 +1615,7 @@ export class RubikaFrontend {
     const path = await import('node:path')
     const dir = path.resolve(folderPath, uploadDir)
     await fs.mkdir(dir, { recursive: true })
-    // `getFile` is confirmed as a recognized Rubika bot API method (returns
-    // INVALID_INPUT on a bad file_id, not "Invalid Method"). Expected to return
-    // { download_url: string } for a valid file_id.
-    const r1 = (await this.send('getFile', { file_id: file.file_id })) as { download_url: string }
-    const res = await fetch(r1.download_url)
-    if (!res.ok) throw new Error(`download HTTP ${res.status}`)
-    const buf = Buffer.from(await res.arrayBuffer())
+    const buf = await this.downloadInboundFile(file.file_id)
     const target = path.join(dir, file.file_name)
     await fs.writeFile(target, buf)
 
@@ -1645,6 +1639,30 @@ export class RubikaFrontend {
     }
 
     await this.send('sendMessage', { chat_id: chatId, text: `📎 Saved ${path.relative(folderPath, target)}` })
+  }
+
+  // Rubika media download URLs can return short 5xx bursts. Request a fresh
+  // getFile URL for each attempt because CDN URLs may be one-shot or edge-bound.
+  // Field so tests can override to [0,0,0,0].
+  private downloadBackoffsMs = [1000, 2000, 4000, 7000]
+
+  private async downloadInboundFile(fileId: string): Promise<Buffer> {
+    let lastErr: unknown
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      try {
+        // `getFile` is confirmed as a recognized Rubika bot API method (returns
+        // INVALID_INPUT on a bad file_id, not "Invalid Method"). Expected to return
+        // { download_url: string } for a valid file_id.
+        const r1 = (await this.send('getFile', { file_id: fileId })) as { download_url: string }
+        const res = await fetch(r1.download_url)
+        if (!res.ok) throw new Error(`download HTTP ${res.status}`)
+        return Buffer.from(await res.arrayBuffer())
+      } catch (err) {
+        lastErr = err
+        if (attempt < 5) await new Promise(r => setTimeout(r, this.downloadBackoffsMs[attempt - 1]))
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
   }
 
   // ── HTTP plumbing ────────────────────────────────────────────────────────
