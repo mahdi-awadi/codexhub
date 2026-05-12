@@ -129,6 +129,22 @@ export class CodexSessionAdapter implements AgentSessionBackend {
         session.lastTurnId = undefined
         this.deps.eventLog.append(session.path, { type: 'turn', text: `thread restore failed ${err}` })
         process.stderr.write(`hub: failed to restore codex session ${session.name}: ${err}\n`)
+        try {
+          const result = await this.deps.client.request<ThreadStartResult>('thread/start', {
+            cwd: this.deps.registry.folderPath(session.path),
+            threadSource: 'user',
+          })
+          const threadId = threadIdFrom(result)
+          session.threadId = threadId
+          this.threadToSessionPath.set(threadId, session.path)
+          this.deps.registry.reconnect(session.path)
+          this.deps.eventLog.append(session.path, { type: 'turn', text: `thread restarted ${threadId}` })
+          process.stderr.write(`hub: started fresh codex thread for ${session.name}: ${threadId}\n`)
+          restored++
+        } catch (freshErr) {
+          this.deps.eventLog.append(session.path, { type: 'turn', text: `thread restart failed ${freshErr}` })
+          process.stderr.write(`hub: failed to start fresh codex thread for ${session.name}: ${freshErr}\n`)
+        }
       }
     }
     return restored

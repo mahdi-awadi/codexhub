@@ -103,7 +103,7 @@ describe('CodexSessionAdapter', () => {
     expect(client.requests.map(r => r.method)).toEqual(['thread/resume', 'turn/start'])
   })
 
-  test('keeps starting when one persisted Codex thread cannot be restored', async () => {
+  test('starts a fresh Codex thread when a persisted thread cannot be restored', async () => {
     const { adapter, client, registry } = makeAdapter()
     client.failResumeThreadIds.add('missing_thread')
     registry.restoreFrom({
@@ -131,11 +131,18 @@ describe('CodexSessionAdapter', () => {
       },
     })
 
-    expect(await adapter.restorePersistedSessions()).toBe(1)
+    expect(await adapter.restorePersistedSessions()).toBe(2)
 
-    expect(registry.get('/missing:0')?.status).toBe('disconnected')
+    expect(registry.get('/missing:0')?.status).toBe('active')
     expect(registry.get('/missing:0')?.lastTurnId).toBeUndefined()
+    expect(registry.get('/missing:0')?.threadId).toBe('thread_1')
     expect(registry.get('/repo:0')?.status).toBe('active')
+    expect(client.requests.map(r => r.method)).toEqual(['thread/resume', 'thread/start', 'thread/resume'])
+    expect(client.requests[1]).toMatchObject({
+      method: 'thread/start',
+      params: { cwd: '/missing', threadSource: 'user' },
+    })
+    expect(await adapter.send('/missing:0', 'hello', { source: 'hub', frontend: 'rubika', user: 'u', session: 'missing' })).toBe(true)
     expect(await adapter.send('/repo:0', 'hello', { source: 'hub', frontend: 'rubika', user: 'u', session: 'repo' })).toBe(true)
   })
 
