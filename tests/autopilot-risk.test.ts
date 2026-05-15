@@ -36,7 +36,7 @@ describe('wrapQuestion', () => {
     expect(wrapped).toContain('BE TERSE. Reply under 50 words.')
     // The default verbose constraint block must NOT also be present.
     expect(wrapped).not.toContain('industry-standard approach')
-    expect(wrapped).toContain('Question from Claude:')
+    expect(wrapped).toContain('Question from Codex:')
     expect(wrapped).toContain('pick A or B')
   })
   test('without a personality, uses the default constraint block (back-compat)', () => {

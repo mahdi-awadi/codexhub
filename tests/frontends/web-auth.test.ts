@@ -497,7 +497,7 @@ describe('GET /api/sessions/:name/prior', () => {
 
   test('returns sessions newest-first with first message preview', async () => {
     // The project cwd stored in the registry is `${tmpProjectsRoot}/project`.
-    // Claude would store that cwd's sessions at `${tmpProjectsRoot}/-<tmpProjectsRoot>-project/`.
+    // Codex stores that cwd's sessions at `${tmpProjectsRoot}/-<tmpProjectsRoot>-project/`.
     // Since the override root is `tmpProjectsRoot`, the storage dir is:
     //   join(tmpProjectsRoot, encodeProjectPath(`${tmpProjectsRoot}/project`))
     // Compute it the same way listPriorSessions does.
@@ -507,7 +507,7 @@ describe('GET /api/sessions/:name/prior', () => {
     mkdirSync(storageDir, { recursive: true })
     writeFileSync(
       join(storageDir, 'aaaa1111-2222-3333-4444-555555555555.jsonl'),
-      JSON.stringify({ type: 'user', message: { role: 'user', content: 'hi claude' } }) + '\n',
+      JSON.stringify({ type: 'user', message: { role: 'user', content: 'hi codex' } }) + '\n',
     )
 
     const res = await fetch(`http://localhost:${web.port}/api/sessions/alpha/prior`, {
@@ -517,7 +517,7 @@ describe('GET /api/sessions/:name/prior', () => {
     const body = await res.json() as { sessions: Array<{ id: string; firstUserMessage: string; mtime: number }> }
     expect(body.sessions.length).toBe(1)
     expect(body.sessions[0].id).toBe('aaaa1111-2222-3333-4444-555555555555')
-    expect(body.sessions[0].firstUserMessage).toBe('hi claude')
+    expect(body.sessions[0].firstUserMessage).toBe('hi codex')
   })
 })
 

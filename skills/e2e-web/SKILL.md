@@ -1,12 +1,12 @@
 ---
 name: e2e-web
-description: Run Playwright browser tests against the channelhub web dashboard. Use when validating UI changes (kebab menu, autopilot toggle, escalation card, settings panels) — the SPA has zero coverage from bun:test alone.
+description: Run Playwright browser tests against the CodexHub web dashboard. Use when validating UI changes (kebab menu, autopilot toggle, escalation card, settings panels) — the SPA has zero coverage from bun:test alone.
 ---
 
 # Browser-level E2E for the dashboard
 
 `tests/e2e/` runs Playwright specs against an isolated `WebFrontend` booted on
-a random port. No real daemon, no shim, no real Claude — each test seeds the
+a random port. No real daemon and no live Codex session — each test seeds the
 SessionRegistry directly.
 
 ## First-time setup

@@ -1,8 +1,8 @@
 // tests/e2e/dashboard.e2e.ts
-// Smoke tests for the channelhub web dashboard. Each test boots its own
+// Smoke tests for the CodexHub web dashboard. Each test boots its own
 // WebFrontend on a random port (in a Bun child process so its bun:sqlite
 // imports work), navigates with a pre-signed auth cookie, and asserts on
-// the rendered DOM. No daemon, no real Claude.
+// the rendered DOM. No daemon, no real Codex.
 //
 // First-time setup: bunx playwright install chromium
 

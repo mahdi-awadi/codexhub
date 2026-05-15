@@ -22,7 +22,7 @@ import type { Decisions } from '../decisions'
 import type { Messages } from '../messages'
 import type { RubikaFrontend, RubikaUpdateBody } from './rubika'
 import { saveSessions } from '../config'
-import { listPriorSessions } from '../claude-sessions'
+import { listPriorSessions } from '../codex/prior-sessions'
 import type { AgentSessionBackend } from '../agent-backend'
 
 const COOKIE_NAME = 'hub_session'
@@ -143,7 +143,7 @@ type WebFrontendDeps = {
   personalities?: Personalities
   decisions?: Decisions
   messages?: Messages
-  projectsRootOverride?: string  // test-only: override ~/.claude/projects root
+  projectsRootOverride?: string  // test-only: override ~/.codex/projects root
 }
 
 export class WebFrontend {
@@ -476,7 +476,7 @@ export class WebFrontend {
         }
 
         // GET /api/peek/:name — capture the live tmux pane (incl. scrollback)
-        // so the dashboard can show what's actually on Claude's screen, not
+        // so the dashboard can show what's actually on the Codex screen, not
         // just what's been relayed through the MCP channel.
         {
           const m = url.pathname.match(/^\/api\/peek\/([^/]+)$/)
@@ -529,12 +529,12 @@ export class WebFrontend {
       this.deps.messages?.record({
         ts: Date.now(),
         sessionName,
-        role: 'claude',
+        role: 'assistant',
         text,
         files,
       })
     } catch (err) {
-      process.stderr.write(`web: messages.record (claude) failed: ${err}\n`)
+      process.stderr.write(`web: messages.record (assistant) failed: ${err}\n`)
     }
     this.broadcastToClients({ type: 'message', sessionName, text, files })
   }
@@ -860,7 +860,7 @@ export class WebFrontend {
       }
       const isManaged = this.deps.screenManager?.isManaged(name) ?? false
 
-      // Either path: send Ctrl-C + `/exit` to the tmux session so Claude
+      // Either path: send Ctrl-C + `/exit` to the tmux session so Codex
       // actually exits. The new gracefulKill handles the unmanaged case
       // (assumes tmux is `hub-<name>`) so the user's "Close session" click
       // really does close it, not just unhook the daemon socket.

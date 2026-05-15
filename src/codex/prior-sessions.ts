@@ -1,13 +1,13 @@
-// src/claude-sessions.ts — pure helpers over ~/.claude/projects/
+// src/codex/prior-sessions.ts — pure helpers over Codex project history
 import { homedir } from 'os'
 import { join, resolve } from 'path'
 import { readdir, stat, open } from 'fs/promises'
 
-export const PROJECTS_ROOT = join(homedir(), '.claude', 'projects')
+export const PROJECTS_ROOT = join(homedir(), '.codex', 'projects')
 
 /**
- * Encode a project cwd to Claude's storage directory name.
- * Claude stores conversations at ~/.claude/projects/<encoded>/<session-id>.jsonl,
+ * Encode a project cwd to Codex's storage directory name.
+ * Codex stores conversations at ~/.codex/projects/<encoded>/<session-id>.jsonl,
  * where <encoded> is the absolute cwd with every '/' replaced by '-'.
  */
 export function encodeProjectPath(projectPath: string): string {

@@ -1,7 +1,7 @@
 // src/error-log.ts
 // SQLite-backed log of autopilot failures (timeout, parse_error, escalate).
 // Lets the user inspect what /btw actually returned when an answer didn't
-// reach Claude — the captured pane is the smoking gun in most cases.
+// reach Codex — the captured pane is the smoking gun in most cases.
 //
 // Schema lives in src/hub-db.ts — this class only knows how to read/write
 // the autopilot_errors table over a Database the caller already opened.

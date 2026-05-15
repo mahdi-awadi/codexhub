@@ -2,7 +2,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
 import { $ } from 'bun'
 import { ScreenManager } from '../src/screen-manager'
-import { buildClaudeCmd, isValidSessionId } from '../src/screen-manager'
+import { isValidSessionId } from '../src/screen-manager'
 
 describe('ScreenManager', () => {
   let manager: ScreenManager
@@ -199,31 +199,12 @@ test('capturePaneWithScrollback clamps line count', async () => {
   }
 })
 
-describe('buildClaudeCmd', () => {
-  test('no resume → bare claude', () => {
-    const cmd = buildClaudeCmd({ team: false })
-    expect(cmd).toBe('claude --dangerously-load-development-channels server:hub')
-  })
+describe('legacy Codex launch path', () => {
+  test('ScreenManager spawn APIs reject instead of launching Codex', async () => {
+    const sm = new ScreenManager()
 
-  test('resume=continue → claude --continue', () => {
-    const cmd = buildClaudeCmd({ team: false, resume: { mode: 'continue' } })
-    expect(cmd).toBe('claude --continue --dangerously-load-development-channels server:hub')
-  })
-
-  test('resume=session → claude --resume <id>', () => {
-    const cmd = buildClaudeCmd({ team: false, resume: { mode: 'session', id: 'aaaa1111-2222-3333-4444-555555555555' } })
-    expect(cmd).toBe('claude --resume aaaa1111-2222-3333-4444-555555555555 --dangerously-load-development-channels server:hub')
-  })
-
-  test('team mode preserves CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS prefix', () => {
-    const cmd = buildClaudeCmd({ team: true })
-    expect(cmd).toContain('CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1')
-    expect(cmd).toContain('claude --dangerously-load-development-channels server:hub')
-  })
-
-  test('rejects a resume session with an invalid id', () => {
-    expect(() =>
-      buildClaudeCmd({ team: false, resume: { mode: 'session', id: '; rm -rf /' } })
-    ).toThrow(/invalid session id/i)
+    await expect(sm.spawn('repo', '/tmp/repo')).rejects.toThrow(/codex session backend/i)
+    await expect(sm.spawnTeam('repo', '/tmp/repo', 2)).rejects.toThrow(/teams are not available/i)
+    await expect(sm.addTeammate('repo')).resolves.toBeNull()
   })
 })

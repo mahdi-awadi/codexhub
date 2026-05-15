@@ -1,8 +1,8 @@
 // src/task-monitor.ts
 import { readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { homedir } from 'os'
 import { EventEmitter } from 'events'
+import { HUB_DIR } from './config'
 
 export type AgentTask = {
   id: string
@@ -31,7 +31,7 @@ export class TaskMonitor extends EventEmitter {
 
   constructor(basePath?: string) {
     super()
-    this.basePath = basePath ?? join(homedir(), '.claude', 'tasks')
+    this.basePath = basePath ?? join(HUB_DIR, 'tasks')
   }
 
   readTasks(teamName?: string): AgentTask[] {

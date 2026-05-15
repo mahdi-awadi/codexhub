@@ -1,8 +1,11 @@
 {
   "webPort": 3000,
   "telegramToken": "",
+  "telegramBotUsername": "mahdicodexbot",
+  "telegramFrontendEnabled": false,
   "telegramAllowFrom": [],
   "rubikaToken": "",
+  "rubikaBotUsername": "mahdicodexhub",
   "rubikaAllowFrom": [],
   "rubikaWebhookBase": "",
   "defaultTrust": "ask",

@@ -1,13 +1,13 @@
 ---
 name: lookup-docs
-description: Fetch current documentation for libraries used in channelhub (Bun, grammy, MCP SDK, Playwright, bun:sqlite, etc.). Prefer Context7 when installed; fall back to WebFetch against the canonical doc site. Use when the user asks "how does X API work" or you're about to call an unfamiliar library method.
+description: Fetch current documentation for libraries used in codexhub (Bun, grammy, MCP SDK, Playwright, bun:sqlite, etc.). Prefer Context7 when installed; fall back to WebFetch against the canonical doc site. Use when the user asks "how does X API work" or you're about to call an unfamiliar library method.
 ---
 
 # Look up library documentation
 
 ## Why this exists
 
-Channelhub leans on libraries that move faster than the model's training cut.
+CodexHub leans on libraries that move faster than the model's training cut.
 Today's debugging hit at least three "is this current?" moments:
 
 - `bun:sqlite` API — added relatively recently, semantics drift
@@ -27,18 +27,7 @@ If the **Context7** plugin is available (auto-loaded MCP tools
 2. get-library-docs with that ID + a topic → get current snippet
 ```
 
-Install Context7 once, project-wide:
-
-```bash
-# As a Claude Code plugin (recommended):
-/plugin install context7@anthropic-marketplace
-
-# Or as a user-scope MCP server (works in any client):
-claude mcp add context7 -- npx -y @upstash/context7-mcp
-```
-
-After install, restart Claude Code in this repo and the tools surface
-automatically.
+Install Context7 once as a user-scope MCP server if your client supports it.
 
 ## Fallback: WebFetch
 
@@ -72,7 +61,7 @@ relevant. Cite the URL you fetched so the user can verify if they want.
 
 ## Note on supportability
 
-Skills can call MCP tools when those tools are exposed to the current Claude
-Code session. Context7 must be installed at the user / plugin level — this
-skill cannot install it for you. If `resolve-library-id` errors with "tool
-not found", drop to the WebFetch fallback in the same response.
+Skills can call MCP tools when those tools are exposed to the current agent
+session. Context7 must be installed at the user level; this skill cannot
+install it for you. If `resolve-library-id` errors with "tool not found", drop
+to the WebFetch fallback in the same response.

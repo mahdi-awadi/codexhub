@@ -55,7 +55,7 @@ export const DEFAULT_AUTOPILOT_DEFAULTS: AutopilotDefaults = {
   maxDurationMinutes: Number.POSITIVE_INFINITY,
   // Pre-fire filter is a backstop only. Broad words like 'delete', 'production',
   // 'secret', 'billing' fire on benign mentions and were too aggressive in
-  // practice. The wrap-prompt itself instructs Claude to escalate on
+  // practice. The wrap-prompt itself instructs Codex to escalate on
   // irreversible decisions, which catches most cases more accurately. Keep
   // ONLY the truly catastrophic, syntactically unambiguous tokens.
   riskKeywords: ['force push', 'drop database'],
@@ -88,6 +88,7 @@ export type HubConfig = {
   browseRoot?: string
   telegramToken: string
   telegramBotUsername?: string
+  telegramFrontendEnabled?: boolean        // default true for existing configs; false allows web-login-only use of the token
   telegramAllowFrom: string[]
   // Rubika is Telegram-shaped at the product level (Iranian messenger) but the
   // bot wire format diverges. Token from Rubika's @BotFather; allowFrom is a

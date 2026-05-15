@@ -1,12 +1,12 @@
 // src/messages.ts
 // Persisted chat history for the web dashboard. Both directions are stored:
-// user-typed messages (role='user') and Claude/autopilot/escalation messages
-// rendered into the chat (role='claude'). Lets a hard refresh of the
+// user-typed messages (role='user') and Codex/autopilot/escalation messages
+// rendered into the chat (role='assistant'). Lets a hard refresh of the
 // dashboard restore the visible conversation.
 
 import { Database } from 'bun:sqlite'
 
-export type MessageRole = 'user' | 'claude'
+export type MessageRole = 'user' | 'assistant'
 
 export type MessageEntry = {
   id?: number
@@ -40,7 +40,7 @@ function rowToEntry(r: Row): MessageEntry {
     id: r.id,
     ts: r.ts,
     sessionName: r.session_name,
-    role: r.role as MessageRole,
+    role: (r.role === 'claude' ? 'assistant' : r.role) as MessageRole,
     text: r.text,
     files,
   }

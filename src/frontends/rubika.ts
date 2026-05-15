@@ -4,7 +4,7 @@
 // Rubika's bot product is shaped like Telegram's but the wire format is
 // different (different base URL, message envelope, button system, no public
 // SDK). This module hand-rolls a small HTTP client + webhook handler that
-// translates Rubika's `NewMessage` updates into channelhub's
+// translates Rubika's `NewMessage` updates into CodexHub's
 // `MessageRouter.routeToSession` calls.
 //
 // Auth model:
@@ -93,7 +93,7 @@ export function chunkText(text: string, limit: number): string[] {
 }
 
 export function deriveInlineWebhookSecret(token: string): string {
-  return createHmac('sha256', 'channelhub-rubika-inline-webhook')
+  return createHmac('sha256', 'codexhub-rubika-inline-webhook')
     .update(token)
     .digest('base64url')
 }
@@ -172,7 +172,7 @@ export type RubikaInlineMessageBody = {
 // HMAC the bot token under a static label. Result is base64url so it's safe
 // in a URL path. The token itself never leaves config.json.
 export function deriveWebhookSecret(token: string): string {
-  return createHmac('sha256', 'channelhub-rubika-webhook')
+  return createHmac('sha256', 'codexhub-rubika-webhook')
     .update(token)
     .digest('base64url')
 }
@@ -200,6 +200,9 @@ export class RubikaFrontend {
   // Rubika's queue while the daemon was offline. We do NOT process them until
   // the user answers the restart prompt.
   private pendingRestartBacklog = new Map<string, RubikaUpdateBody[]>()
+  private seenInboundMessageIds: string[] = []
+  private seenInboundMessageIdSet = new Set<string>()
+  private static readonly SEEN_INBOUND_CAP = 1000
   private started = false
   private permissions?: PermissionEngine
   private screenManager?: ScreenManager
@@ -305,12 +308,9 @@ export class RubikaFrontend {
       } catch (err) {
         process.stderr.write(`rubika: bootstrap getUpdates failed (will retry on first poll): ${err}\n`)
       }
-      if (webhookActive) {
-        process.stderr.write('rubika: webhook registered — continuous polling disabled (webhook owns intake)\n')
-      } else {
-        this.pollTimer = setInterval(() => { this.pollOnce().catch(() => {}) }, this.pollingIntervalMs)
-        process.stderr.write(`rubika: no webhook — continuous polling every ${this.pollingIntervalMs}ms\n`)
-      }
+      this.pollTimer = setInterval(() => { this.pollOnce().catch(() => {}) }, this.pollingIntervalMs)
+      const mode = webhookActive ? 'webhook registered; polling also enabled for queued updates' : 'no webhook'
+      process.stderr.write(`rubika: ${mode} — continuous polling every ${this.pollingIntervalMs}ms\n`)
     }
   }
 
@@ -498,7 +498,7 @@ export class RubikaFrontend {
     return null
   }
 
-  // ── Outbound (Claude → user) ─────────────────────────────────────────────
+  // ── Outbound (Codex → user) ─────────────────────────────────────────────
   async deliverPermissionRequest(req: PermissionRequest): Promise<void> {
     if (this.deps.allowFrom.length === 0) return
     const text = `🔒 ${req.sessionName} wants to use *${req.toolName}*\n\n${req.inputPreview ?? ''}`
@@ -604,11 +604,18 @@ export class RubikaFrontend {
     }
     this.chatIdByUser.set(senderId, inner.chat_id)
 
+    const text = (m.text || '').trim()
     // ── Inbound file (photo / document) ─────────────────────────────────────
     // Rubika uses `file` for inbound (verified 2026-05-02 via real photo); the
     // outbound shape is `file_inline`. Accept both — the old guess is harmless.
     const inboundFile =
       ((m as any).file ?? (m as any).file_inline) as { file_id: string; file_name: string; type?: string } | undefined
+
+    if (text.length > 0 && isOwner && this.handleRestartBacklogText(senderId, inner.chat_id, text)) return
+
+    if (this.wasInboundMessageSeen(m.message_id)) return
+    this.rememberInboundMessage(m.message_id)
+
     if (inboundFile) {
       const target = guestSession ?? this.activeSessionByUser.get(senderId) ?? this.firstActiveSessionName()
       if (!target) {
@@ -632,10 +639,7 @@ export class RubikaFrontend {
       return
     }
 
-    const text = (m.text || '').trim()
     if (text.length === 0) return
-
-    if (isOwner && this.handleRestartBacklogText(senderId, inner.chat_id, text)) return
 
     // Guests are locked to their pinned session: every command (/list, /spawn,
     // /<other-session>, even /<their-own-session>) is rejected; reply-to
@@ -657,6 +661,7 @@ export class RubikaFrontend {
 
     const parsed = parseCommand(text)
     if (parsed) {
+      process.stderr.write(`rubika: accepted command /${parsed.command} from ${senderId}\n`)
       this.dispatchCommand(senderId, inner.chat_id, parsed.command, parsed.args).catch(err =>
         process.stderr.write(`rubika: command "${parsed.command}" failed: ${err}\n`),
       )
@@ -692,7 +697,22 @@ export class RubikaFrontend {
         .catch((err) => process.stderr.write(`rubika: ack-send failed: ${err}\n`))
       return
     }
+    process.stderr.write(`rubika: accepted message from ${senderId} -> ${target}\n`)
     this.deps.router.routeToSession(target, text, 'rubika', senderId)
+  }
+
+  private wasInboundMessageSeen(messageId: string | undefined): boolean {
+    return Boolean(messageId && this.seenInboundMessageIdSet.has(messageId))
+  }
+
+  private rememberInboundMessage(messageId: string | undefined): void {
+    if (!messageId || this.seenInboundMessageIdSet.has(messageId)) return
+    this.seenInboundMessageIdSet.add(messageId)
+    this.seenInboundMessageIds.push(messageId)
+    while (this.seenInboundMessageIds.length > RubikaFrontend.SEEN_INBOUND_CAP) {
+      const old = this.seenInboundMessageIds.shift()
+      if (old) this.seenInboundMessageIdSet.delete(old)
+    }
   }
 
   handleInlineWebhook(body: RubikaInlineMessageBody): void {

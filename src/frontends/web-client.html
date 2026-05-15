@@ -19,7 +19,7 @@
       --text: #e0e0e0;
       --text-muted: #888;
       --user-bubble: #1a3a6e;
-      --claude-bubble: #1e1e3a;
+      --assistant-bubble: #1e1e3a;
       --input-bg: #0d0d1a;
     }
 
@@ -32,7 +32,7 @@
       --text: #1f2328;
       --text-muted: #6b7280;
       --user-bubble: #dbeafe;
-      --claude-bubble: #f3f4f6;
+      --assistant-bubble: #f3f4f6;
       --input-bg: #ffffff;
     }
 
@@ -45,7 +45,7 @@
       --text: #e6f2ff;
       --text-muted: #7aa3c9;
       --user-bubble: #1e3a5f;
-      --claude-bubble: #13273c;
+      --assistant-bubble: #13273c;
       --input-bg: #08142a;
     }
 
@@ -58,7 +58,7 @@
       --text: #ede6f4;
       --text-muted: #a89ab0;
       --user-bubble: #3d3449;
-      --claude-bubble: #33293f;
+      --assistant-bubble: #33293f;
       --input-bg: #231d2c;
     }
 
@@ -71,7 +71,7 @@
       --text: #fdf6e3;
       --text-muted: #93a1a1;
       --user-bubble: #094352;
-      --claude-bubble: #073642;
+      --assistant-bubble: #073642;
       --input-bg: #001e26;
     }
 
@@ -368,7 +368,7 @@
       max-width: 75%;
     }
     .msg-row.user { align-self: flex-end; align-items: flex-end; }
-    .msg-row.claude { align-self: flex-start; align-items: flex-start; }
+    .msg-row.assistant { align-self: flex-start; align-items: flex-start; }
     .msg-row.other { align-self: flex-start; align-items: flex-start; opacity: 0.75; }
 
     .msg-bubble {
@@ -378,12 +378,12 @@
       line-height: 1.5;
       word-break: break-word;
     }
-    /* User bubbles stay plain-text; claude bubbles get full markdown rendering */
+    /* User bubbles stay plain-text; assistant bubbles get full markdown rendering */
     .msg-row.user .msg-bubble { background: var(--user-bubble); border-radius: 12px 12px 2px 12px; white-space: pre-wrap; }
-    .msg-row.claude .msg-bubble { background: var(--claude-bubble); border: 1px solid var(--border); border-radius: 12px 12px 12px 2px; }
-    .msg-row.other .msg-bubble { background: var(--claude-bubble); border: 1px solid var(--border); font-style: italic; border-radius: 12px 12px 12px 2px; }
+    .msg-row.assistant .msg-bubble { background: var(--assistant-bubble); border: 1px solid var(--border); border-radius: 12px 12px 12px 2px; }
+    .msg-row.other .msg-bubble { background: var(--assistant-bubble); border: 1px solid var(--border); font-style: italic; border-radius: 12px 12px 12px 2px; }
 
-    /* ─── Markdown rendering inside Claude's bubble ─── */
+    /* ─── Markdown rendering inside assistant bubble ─── */
     .msg-bubble.md > *:first-child { margin-top: 0; }
     .msg-bubble.md > *:last-child { margin-bottom: 0; }
     .msg-bubble.md p { margin: 0.5em 0; }
@@ -1132,16 +1132,16 @@
       } else if (msg.type === 'message') {
         const { sessionName, text, files } = msg
         if (!messagesBySession[sessionName]) messagesBySession[sessionName] = []
-        messagesBySession[sessionName].push({ role: 'claude', text, files, ts: Date.now() })
+        messagesBySession[sessionName].push({ role: 'assistant', text, files, ts: Date.now() })
 
         if (sessionName === activeSession) {
-          appendMessage({ role: 'claude', text, files }, false)
+          appendMessage({ role: 'assistant', text, files }, false)
         } else {
           // Badge + append with tag
           unreadBySession[sessionName] = (unreadBySession[sessionName] || 0) + 1
           renderSidebar()
           if (activeSession) {
-            appendMessage({ role: 'claude', text, files, fromSession: sessionName }, true)
+            appendMessage({ role: 'assistant', text, files, fromSession: sessionName }, true)
           }
         }
       } else if (msg.type === 'permission') {
@@ -1166,7 +1166,7 @@
 
     // Autopilot escalation card — appears when autopilot bounces a question
     // (risk keyword / ESCALATE token / timeout / parse error). Offers three
-    // one-click actions so the user doesn't have to scroll to find Claude's
+    // one-click actions so the user doesn't have to scroll to find the assistant's
     // question or retype anything.
     function showAutopilotEscalationCard(msg) {
       // Remove any existing card for this session (one at a time per session)
@@ -2154,7 +2154,7 @@
       if (empty) empty.remove()
 
       const row = document.createElement('div')
-      row.className = 'msg-row ' + (msg.role === 'user' ? 'user' : isOther ? 'other' : 'claude')
+      row.className = 'msg-row ' + (msg.role === 'user' ? 'user' : isOther ? 'other' : 'assistant')
 
       if (isOther && msg.fromSession) {
         const tag = document.createElement('div')
@@ -2169,7 +2169,7 @@
         // User input — keep as plain text so '*foo*' from a typo doesn't surprise the user
         bubble.innerHTML = escapeHtml(msg.text || '').replace(/\n/g, '<br>')
       } else {
-        // Claude / other-session — render markdown (tables, code, lists, headings, ...)
+        // Assistant / other-session — render markdown (tables, code, lists, headings, ...)
         bubble.classList.add('md')
         bubble.innerHTML = renderMarkdown(msg.text || '')
       }

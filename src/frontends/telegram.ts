@@ -419,8 +419,8 @@ export class TelegramFrontend {
       }
     })
 
-    // /resume <name> <path> [--profile <name>] — resumes the latest claude
-    // session for that cwd via `claude --continue`. No session-id picker on
+    // /resume <name> <path> [--profile <name>] — resumes the latest Codex
+    // thread for that cwd. No session-id picker on
     // mobile frontends; for explicit session IDs, use the web spawn dialog.
     bot.command('resume', async (ctx) => {
       if (!this.isAllowed(ctx)) return
@@ -735,7 +735,7 @@ export class TelegramFrontend {
     })
 
     // /peek [name] [lines] — capture the live tmux pane (incl. scrollback) so
-    // the user can see Claude's actual terminal output, not just the relayed
+    // the user can see Codex's actual terminal output, not just the relayed
     // chat. Frontend chats only see what flows through the MCP channel —
     // Ink overlays, slash commands, and autopilot output are otherwise hidden.
     bot.command('peek', async (ctx) => {

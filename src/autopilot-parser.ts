@@ -1,5 +1,5 @@
 // src/autopilot-parser.ts
-// Pure parsing of the Claude Code /btw overlay out of a tmux pane capture.
+// Pure parsing of the Codex /btw overlay out of a tmux pane capture.
 
 export type ParseResult =
 	| { status: 'ok'; answer: string }
@@ -22,7 +22,7 @@ function stripAnsi(s: string): string {
 }
 
 // Only consider the lines BEFORE the footer when looking for a spinner.
-// "esc to interrupt", "Thinking…", etc. can appear in the parent Claude's
+// "esc to interrupt", "Thinking…", etc. can appear in the parent Codex's
 // status line BELOW the /btw overlay, and would otherwise cause the overlay
 // to look unsettled forever.
 function overlayHasSpinner(clean: string): boolean {

@@ -1,364 +1,138 @@
 # CodexHub
 
-> ⚠️ **Beta Software** — CodexHub is in active development. Expect bugs, breaking changes, and rough edges. Bug reports and contributions are welcome. Do not rely on it for critical workflows yet.
+CodexHub is a multi-session hub for Codex. It lets you manage Codex sessions from Telegram, Rubika, a web dashboard, or the CLI.
 
-A multi-session hub for Codex that lets you manage all your Codex sessions from one place — Telegram, Rubika, web dashboard, or CLI.
-
-**The problem:** Codex sessions are usually managed one terminal at a time. If you run multiple projects, you need to keep switching contexts.
-
-**The solution:** CodexHub runs a single daemon that accepts connections from all your Codex sessions. Send messages, approve permissions, upload files, and manage work — from one Telegram bot, Rubika bot, or web dashboard.
+This project is Codex-first. It uses Codex backend adapters and CodexHub install paths.
 
 ## Features
 
-- **Multi-session management** — all Codex sessions visible in one dashboard
-- **Telegram bot** — send messages, approve permissions, upload photos/documents from your phone
-- **Rubika bot** — text-message routing through a webhook-based MVP frontend
-- **Web dashboard** — real-time chat, permission prompts, session status, file upload
-- **Permission relay** — approve/deny tool use from Telegram or web (native MCP channel protocol)
-- **Agent teams** — coordinate multiple Codex sessions from one place
-- **Session routing** — switch between projects, broadcast to all, or target specific sessions
-- **CLI** — manage sessions from the terminal
-- **Prompt tags** — toggle instructions (use superpowers, TDD, be concise) appended to messages
-
-## How It Works
-
-```
-You (Telegram / Rubika / Web / CLI)
-       ↓
-Hub Daemon (manages everything)
-  ├── Socket Server (Unix socket)
-  │     ↕ adapter ↔ Codex session A
-  │     ↕ adapter ↔ Codex session B
-  │     ↕ adapter ↔ Codex session C
-  ├── Telegram Bot
-  ├── Rubika Bot
-  ├── Web Dashboard
-  └── Permission Engine
-```
-
-Each Codex session is represented in the daemon and routed through the Codex backend adapter. The daemon routes messages between your frontends and all connected sessions.
+- Multi-session Codex management from one daemon
+- Telegram bot messaging, approvals, and file upload
+- Rubika bot message routing and approval buttons
+- Web dashboard with Telegram login
+- CLI for session management
+- Permission relay from Codex approval requests to Telegram, Rubika, and web
+- Session spawning and recovery through Codex backend adapters
 
 ## Prerequisites
 
-Before installing, make sure you have:
-
-- **[Bun](https://bun.sh) >= 1.0** — the installer will offer to install it for you if missing
-- **[tmux](https://github.com/tmux/tmux)** — required for daemon and session management
-  - Debian/Ubuntu: `apt install tmux`
-  - RHEL/Fedora: `dnf install tmux`
-  - macOS: `brew install tmux`
-- **Codex CLI / Codex App Server access**
-- **git** — to clone the repository
-- **jq** (recommended) — for automatic config updates
-- **A Telegram bot token** (optional) — create one with [@BotFather](https://t.me/BotFather) if you want the Telegram frontend
-- **A Rubika bot token** (optional) — set `rubikaToken`, `rubikaAllowFrom`, and `rubikaWebhookBase` if you want the Rubika frontend
+- Bun 1.0 or newer
+- tmux
+- Codex CLI / Codex app server access
+- git
+- A Telegram bot token for `@mahdicodexbot`, if you want Telegram
+- A Rubika bot token for `@mahdicodexhub`, if you want Rubika
 
 ## Quick Install
 
-One-liner that handles everything:
-
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mahdi-awadi/channelhub/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mahdi-awadi/codexhub/main/install.sh | bash
 ```
 
-This will:
-1. Check prerequisites (install Bun if missing)
-2. Clone CodexHub to `~/.codexhub`
-3. Install dependencies
-4. Create config template at `~/.claude/channels/hub/config.json`
-5. Register the MCP server in `~/.claude.json`
-6. Install the `channelhub` command to `~/.local/bin`
+The installer clones the repo to `~/.codexhub`, installs dependencies, creates `~/.codexhub/data/config.json`, and installs the `codexhub` command in `~/.local/bin`.
 
-### Configure
+## Configure
 
-Edit `~/.claude/channels/hub/config.json` and add your Telegram token and user ID:
+Edit `~/.codexhub/data/config.json`:
 
 ```json
 {
   "webPort": 3000,
-  "telegramToken": "<bot-token-from-botfather>",
+  "telegramToken": "<telegram-token-for-mahdicodexbot>",
+  "telegramBotUsername": "mahdicodexbot",
+  "telegramFrontendEnabled": true,
   "telegramAllowFrom": ["<your-telegram-user-id>"],
-  "rubikaToken": "",
-  "rubikaAllowFrom": [],
-  "rubikaWebhookBase": "",
+  "rubikaToken": "<rubika-token-for-mahdicodexhub>",
+  "rubikaBotUsername": "mahdicodexhub",
+  "rubikaAllowFrom": ["<your-rubika-sender-id>"],
+  "rubikaWebhookBase": "https://your-public-origin.example",
   "defaultTrust": "ask",
   "defaultUploadDir": "."
 }
 ```
 
-Get your Telegram user ID by messaging [@userinfobot](https://t.me/userinfobot).
+Empty `telegramToken` disables Telegram. Empty `rubikaToken` disables Rubika. If a token is set, the matching allowlist must contain your user or sender id.
 
-### Start
+## Run
 
 ```bash
-sudo systemctl start channelhub        # Start the daemon
-sudo systemctl status channelhub       # Check if it's running
-tail -f /var/log/channelhub.log        # View daemon logs
+codexhub start
+codexhub status
+codexhub logs
 ```
 
-### Connect Codex
+Open the dashboard at `http://localhost:3000`.
 
-In any project folder:
+Start Codex from any project directory:
 
 ```bash
 codex
 ```
 
-Your session appears in the dashboard at `http://localhost:3000` immediately.
-
-### CLI Commands
-
-```bash
-sudo systemctl start channelhub     # Start daemon
-sudo systemctl stop channelhub      # Stop daemon
-sudo systemctl restart channelhub   # Restart daemon
-sudo systemctl status channelhub    # Status
-tail -f /var/log/channelhub.log     # Tail daemon logs
-channelhub list                     # List sessions
-channelhub send <name> "message"
-channelhub spawn <name> <path>
-channelhub trust <name> auto
-```
-
-## Manual Install
-
-If you prefer to install manually instead of the one-liner:
-
-```bash
-git clone https://github.com/mahdi-awadi/codexhub.git ~/.codexhub
-cd ~/.codexhub
-bun install
-
-# Create config
-mkdir -p ~/.claude/channels/hub
-cp config.example.json ~/.claude/channels/hub/config.json
-$EDITOR ~/.claude/channels/hub/config.json
-
-# Register MCP server — add to ~/.claude.json mcpServers:
-# "hub": { "command": "bun", "args": ["run", "~/.channelhub/src/shim.ts"] }
-
-# Start daemon (systemd; see /etc/systemd/system/channelhub.service)
-sudo systemctl enable --now channelhub
-sudo systemctl status channelhub
-# Logs: /var/log/channelhub.log
-```
-
-## Telegram Bot Commands
-
-| Command | Description |
-|---------|-------------|
-| `/list` | Show sessions, pick active (inline buttons) |
-| `/status` | Dashboard with session details |
-| `/spawn <name> <path> [team-size]` | Start a Codex session |
-| `/kill <name>` | Stop a session |
-| `/remove <name>` | Remove a disconnected session from the list |
-| `/team <name> [add]` | Show team status or add teammate |
-| `/trust <name> [auto\|ask]` | Toggle auto-approve permissions |
-| `/prefix <name> <text>` | Set command prefix for a session |
-| `/rename <old> <new>` | Rename a session |
-| `/all <message>` | Broadcast to all sessions |
-| `/verify <name>` | Run the session's verification commands (tests, typecheck, lint) |
-| `/autopilot <name> [on\|off]` | Toggle proxy-answer autopilot mode |
-| `/btw <question>` | Ask a side question to the active session via the `/btw` overlay (also available on Rubika) |
-
-**Message routing:**
-- Plain text goes to your active session
-- `/<session-name> message` targets a specific session
-- Send a photo or document to upload it to the active session's project folder
-
-## Rubika Bot
-
-Rubika support is currently a text-only webhook MVP.
-
-- Configure `rubikaToken` with your Rubika bot token.
-- Set `rubikaAllowFrom` to the Rubika `sender_id` values allowed to use the bot. Empty means deny all.
-- Set `rubikaWebhookBase` to the public HTTPS origin that can reach the web frontend, for example `https://hub.example.com`.
-- The daemon registers `receiveUpdate` with Rubika at `/api/rubika/webhook/<secret>`.
-- Inbound text from an allowed sender routes to that sender's active session, defaulting to the first active session.
-- Codex replies are sent with a `[session]` prefix after an allowed sender has messaged the bot once, which lets CodexHub learn Rubika's `chat_id`.
-
-Rubika does not yet support ChannelHub commands, permission buttons, autopilot draft buttons, file uploads, or session switching UI.
-
-### Verification
-
-Running `/verify <session>` executes the session's profile-defined verification commands against the session's project directory. If the applied profile has no commands, the runner auto-detects them from the project's `package.json` scripts (`test`, `typecheck`, `lint`).
-
-Commands run sequentially and stop on the first failure. You get `✅` back on success, or a failure message containing the failed command, exit code, and the last 20 lines of merged stdout/stderr on failure. Per-command timeout is 120 seconds.
-
-Built-in profiles with defaults:
-- **careful** — `bun test`, `bunx tsc --noEmit`
-- **tdd** — `bun test`, `bunx tsc --noEmit`
-- **docs** / **yolo** — no commands (probe decides from `package.json`)
-
-## Web Dashboard
-
-Access at `http://localhost:<webPort>` (or via reverse proxy).
-
-- **Telegram login** — only allowlisted users can access
-- **Session sidebar** — status dots, team grouping, `[+]` to add teammates
-- **Chat view** — send messages, see replies, permission prompts with Allow/Always Allow/Deny
-- **File upload** — clip button or drag-and-drop
-- **Prompt tags** — toggleable pills (Superpowers, TDD, Concise, etc.)
-- **Spawn dialog** — directory browser, team checkbox
-
-## Browser (headless Chrome)
-
-CodexHub auto-spawns a headless Chrome on `127.0.0.1:9222` so Codex
-sessions can drive a browser via Google's
-[`chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp).
-
-**One-time setup:**
-
-```bash
-# In the channelhub repo:
-bunx playwright install chromium
-
-# Add chrome-devtools-mcp to your ~/.claude.json mcpServers:
-{
-  "mcpServers": {
-    "hub": { "command": "bun", "args": ["run", "/path/to/channelhub/src/shim.ts"] },
-    "chrome": {
-      "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp", "--browserURL", "http://127.0.0.1:9222"]
-    }
-  }
-}
-```
-
-When the daemon starts, you'll see:
-
-```
-hub: chrome started (pid=…, port=9222)
-```
-
-**Disable it** by setting `chromeEnabled: false` in
-`~/.claude/channels/hub/config.json`. **Override the port** with
-`chromePort` or the binary path with `chromeExecutablePath`. The
-persistent profile lives at `~/.claude/channels/hub/chrome-profile/`
-(cookies and logins survive restarts; share carefully across
-sessions).
-
-## Permission Relay
-
-When Codex wants to run a tool (Bash, Write, etc.), the permission prompt appears in both the terminal AND your Telegram/web dashboard. You can approve from either place — first response wins.
-
-```
-Codex wants to use Bash → permission_request → Hub → Telegram/Web
-You click Allow → Hub → Codex proceeds
-```
-
-- **Trusted sessions** (`auto-approve`): auto-allowed, you never see the prompt
-- **Untrusted sessions** (`ask`): forwarded with Allow / Always Allow / Deny buttons
-
-## Agent Teams
-
-Spawn multiple Codex sessions that work together:
-
-- **Web UI:** check "Run as team" when spawning, set team size
-- **Telegram:** `/spawn myproject /home/user/project 3` (1 lead + 2 teammates)
-- **Add teammates later:** `[+]` button in web, or `/team myproject add` in Telegram
-
-The hub monitors `~/.claude/tasks/` for agent team task files and displays progress.
-
-## Configuration
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `webPort` | number | 3000 | Web dashboard and API port |
-| `telegramToken` | string | `""` | Bot token from [@BotFather](https://t.me/BotFather) |
-| `telegramAllowFrom` | string[] | `[]` | Telegram user IDs allowed. **Empty = deny all.** The Telegram frontend refuses to start and web auth rejects every login when this list is empty. |
-| `rubikaToken` | string | `""` | Rubika bot token. Empty disables the Rubika frontend. |
-| `rubikaAllowFrom` | string[] | `[]` | Rubika sender IDs allowed. **Empty = deny all.** The Rubika frontend refuses to start when a token is configured without allowed senders. |
-| `rubikaWebhookBase` | string | `""` | Public HTTPS origin where Rubika can POST webhook updates. |
-| `rubikaApiBase` | string | `https://botapi.rubika.ir/v3` | Optional Rubika Bot API base override. |
-| `defaultTrust` | `"ask"` \| `"auto-approve"` | `"ask"` | Default permission mode for new sessions |
-| `defaultUploadDir` | string | `"."` | Upload directory relative to project root |
-| `browseRoot` | string | `$HOME` | Scope for the spawn dialog's directory picker. Set to `"/home"` when the daemon runs as `root` with projects under `/home/*`. |
-
-Config file: `~/.claude/channels/hub/config.json`
-
 ## CLI
 
 ```bash
-HUB_URL=http://localhost:3000 bun run src/cli.ts <command>
+codexhub list
+codexhub status
+codexhub spawn <name> <path>
+codexhub send <name> "message"
+codexhub trust <name> auto
+codexhub kill <name>
+codexhub refresh-rubika
 ```
 
-| Command | Example |
-|---------|---------|
-| `list` | Show all sessions |
-| `status` | Detailed session info |
-| `spawn <name> <path>` | Start a Codex session |
-| `kill <name>` | Stop a session |
-| `send <name> <message>` | Send message to session |
-| `trust <name> auto` | Set auto-approve |
-| `prefix <name> <text>` | Set command prefix |
-| `rename <old> <new>` | Rename session |
-| `upload <name> <file>` | Upload file to project |
-| `autopilot <name> on` | Enable autopilot mode |
+## Telegram Commands
 
-## Security Model
+| Command | Description |
+| --- | --- |
+| `/list` | Show sessions and pick the active session |
+| `/status` | Show daemon and session status |
+| `/spawn <name> <path> [team-size]` | Start a Codex session |
+| `/kill <name>` | Stop a session |
+| `/remove <name>` | Remove a disconnected session |
+| `/team <name> [add]` | Show team status or add a teammate |
+| `/trust <name> [auto\|ask]` | Toggle permission behavior |
+| `/prefix <name> <text>` | Set the message prefix for a session |
+| `/rename <old> <new>` | Rename a session |
+| `/all <message>` | Broadcast to all sessions |
+| `/verify <name>` | Run verification commands |
+| `/autopilot <name> [on\|off]` | Toggle autopilot |
+| `/btw <question>` | Ask a side question |
 
-CodexHub runs as **you** on your own machine and treats anyone who can authenticate as having your shell. Accordingly:
+Plain messages route to your active session. `/<session-name> message` targets a specific session.
 
-- **The web server binds to `127.0.0.1` only.** It is not reachable from the LAN. Remote access must go through a reverse proxy or tunnel (see below).
-- **Authentication is cookie-based.** Logging in via the Telegram Login Widget verifies an HMAC and sets an `HttpOnly`, `SameSite=Strict` session cookie signed with your bot token. Every `/api/*` request and WebSocket upgrade requires that cookie; unauthenticated requests return `401`.
-- **`telegramAllowFrom` is deny-by-default.** Leaving the list empty disables both the Telegram frontend (refuses to start) and web login. There is no "allow everyone" mode.
-- **The Unix socket is `0600`** and restricted to your UID, so other local users cannot impersonate a shim.
-- **Uploads are sanitized and scoped** — filenames are stripped of path separators and unsafe characters; the resolved destination must stay inside the session's project directory.
-- **Auto-fetched file contents** (when Codex says "saved to /path/..." and the hub forwards the file body to your Telegram/web) are scoped to each session's project root. Prompt-injection cannot make the daemon read `~/.ssh/` or `/etc/`.
+## Rubika
 
-## Exposing the Web Dashboard
+Rubika uses the `mahdicodexhub` bot identity. Configure `rubikaToken`, `rubikaBotUsername`, `rubikaAllowFrom`, and `rubikaWebhookBase`. The daemon registers webhook endpoints under `/api/rubika/...` when a public base URL is configured and also polls Rubika's queue with message-id dedupe so queued updates are not missed.
 
-The web dashboard runs on `127.0.0.1` only. To access it remotely, put an authenticated proxy in front — the dashboard's own cookie auth is not a substitute for TLS + an external access control. Options:
+## Configuration
 
-- **Nginx / Traefik / Caddy with TLS and basic auth or SSO** — point your domain to `http://127.0.0.1:<webPort>`, enable WebSocket passthrough, require authentication at the proxy.
-- **Tailscale / Cloudflare Tunnel** — identity-aware tunnels. Good default for personal use.
-- **SSH tunnel** — `ssh -L 3000:localhost:3000 your-server`. Simplest; only you have the key.
+Config file: `~/.codexhub/data/config.json`
 
-Do not expose the port directly (`0.0.0.0` or a public address) — the daemon deliberately refuses that binding for safety, and proxying is cheap.
-
-Configure your bot's domain in @BotFather (`/setdomain`) so the Telegram Login Widget works on your proxy domain.
-
-## Prerequisites
-
-- [Bun](https://bun.sh) >= 1.0
-- [tmux](https://github.com/tmux/tmux) (for daemon and session management)
-- Codex CLI / Codex App Server access
-- A Telegram bot token (optional, for Telegram frontend)
-- A Rubika bot token (optional, for Rubika frontend)
-
-## Autopilot Mode
-
-Enable unattended question-answering in a session:
-
-```bash
-# Telegram
-/autopilot myproject on
-
-# Web UI
-Click the "Autopilot" toggle in the session row
-
-# CLI
-bun run src/cli.ts autopilot myproject on
-```
-
-When autopilot is on, the daemon answers user-facing questions automatically. Legacy tmux sessions use the in-session `/btw` side question; Codex-backed sessions run a one-shot `codex exec` in the same project directory and send the printed answer back to the live session. The proxy answers using the project context plus preferences in `autopilot.md`. See `skills/autopilot/SKILL.md` for setup details.
-
-Risk gates: answers containing risk keywords (`delete`, `force push`, `production`, etc.) or marked with `ESCALATE:` are escalated to you on Telegram/Web. Default veto window is 30 seconds — you can review the draft answer and Send, Edit, or Cancel before it's auto-sent.
+| Field | Default | Description |
+| --- | --- | --- |
+| `webPort` | `3000` | Web dashboard and API port |
+| `webHost` | `127.0.0.1` | Web bind host |
+| `telegramToken` | `""` | Telegram bot token |
+| `telegramBotUsername` | `"mahdicodexbot"` | Telegram login widget bot username |
+| `telegramFrontendEnabled` | `false` in new templates | Enables Telegram polling when token is present |
+| `telegramAllowFrom` | `[]` | Allowed Telegram user ids |
+| `rubikaToken` | `""` | Rubika bot token |
+| `rubikaBotUsername` | `"mahdicodexhub"` | Rubika bot username for logs and command identity |
+| `rubikaAllowFrom` | `[]` | Allowed Rubika sender ids |
+| `rubikaWebhookBase` | `""` | Public HTTPS origin for Rubika webhooks |
+| `rubikaApiBase` | `https://botapi.rubika.ir/v3` | Rubika API base override |
+| `defaultTrust` | `"ask"` | Default permission mode |
+| `defaultUploadDir` | `"."` | Upload directory relative to the project root |
+| `browseRoot` | `$HOME` | Directory picker root |
 
 ## Development
 
 ```bash
-bun test              # 337 tests
-bun run src/daemon.ts # start daemon
-bun run src/cli.ts    # CLI tool
+bun test
+bun run src/daemon.ts
+bun run src/cli.ts
 ```
-
-## Plugin Status
-
-> **CodexHub is under active porting.** The current branch is replacing the old channel transport with a Codex backend while preserving Telegram, Rubika, web, CLI, permissions, uploads, and verification.
-
-The project is structured as a CodexHub daemon with frontend adapters and a Codex backend adapter.
 
 ## License
 

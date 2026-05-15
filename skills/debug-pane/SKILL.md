@@ -1,38 +1,29 @@
 ---
 name: debug-pane
-description: Snapshot a channelhub session's tmux pane PLUS its recent autopilot errors and registry state in one structured dump. Use when the user reports an autopilot/permission/spawn problem on a specific session, or when you need fast forensic context before forming a hypothesis.
+description: Snapshot a codexhub session's recent event log, autopilot errors, and registry state in one structured dump. Use when the user reports an autopilot/permission/spawn problem on a specific session, or when you need fast forensic context before forming a hypothesis.
 ---
 
-# Debug a channelhub session
+# Debug a codexhub session
 
-Replaces the manual 4-tool dance (`tmux capture-pane`, `sqlite3`, `grep
-sessions.json`, `grep daemon log`) with one structured collection step. Use
+Replaces the manual 3-tool dance (`sqlite3`, `grep sessions.json`, `grep daemon
+log`) with one structured collection step. Use
 this BEFORE proposing any fix.
 
 ## Inputs
 
 You need: **session name** (e.g. `sap`, `ap-test`, `eticket-v3`). The user
-usually says it; if not, ask once. Run `tmux ls | grep ^hub-` to see what's
-live.
+usually says it; if not, ask once.
 
 ## Procedure
 
 ```bash
 NAME="<session-name>"
-TMUX="hub-${NAME}"
-
-echo "=== 1. Visible pane (no scrollback) ==="
-tmux capture-pane -t "${TMUX}" -p 2>&1 | tail -40
 
 echo
-echo "=== 2. Pane WITH scrollback (200 lines) — for /btw history forensics ==="
-tmux capture-pane -t "${TMUX}" -p -S -200 2>&1 | tail -60
-
-echo
-echo "=== 3. Registry state (~/.claude/channels/hub/sessions.json) ==="
+echo "=== 1. Registry state (~/.codexhub/data/sessions.json) ==="
 python3 -c "
 import json
-with open('$HOME/.claude/channels/hub/sessions.json') as f: m = json.load(f)
+with open('$HOME/.codexhub/data/sessions.json') as f: m = json.load(f)
 for k,v in m.items():
     if v.get('name') == '${NAME}':
         print(f'  path: {k}')
@@ -43,13 +34,13 @@ else:
 "
 
 echo
-echo "=== 4. Last 5 autopilot errors for this session ==="
-sqlite3 "$HOME/.claude/channels/hub/errors.sqlite" \
+echo "=== 2. Last 5 autopilot errors for this session ==="
+sqlite3 "$HOME/.codexhub/data/hub.sqlite" \
   "SELECT id, datetime(ts/1000,'unixepoch','localtime') AS when_, status, reason, length(captured_pane) AS pane_len, duration_ms FROM autopilot_errors WHERE session_name = '${NAME}' ORDER BY ts DESC LIMIT 5" 2>/dev/null \
-  || echo "  errors.sqlite not present or no rows"
+  || echo "  hub.sqlite not present or no rows"
 
 echo
-echo "=== 5. Last 30 daemon log lines mentioning this session ==="
+echo "=== 3. Last 30 daemon log lines mentioning this session ==="
 tmux capture-pane -t hub-daemon -p -S -300 2>&1 | grep -E "${NAME}|/$(basename ${NAME})" | tail -30
 ```
 
@@ -59,11 +50,9 @@ After the dump, work top-down:
 
 | Step | What you're looking for |
 |---|---|
-| 1 | Is Claude **idle** (`❯` prompt + `? for shortcuts`)? Or stuck on a permission menu (`❯ 1. Yes`)? Or showing `esc to interrupt` (busy)? |
-| 2 | Stale `/btw` overlays in scrollback — if the parser sees these without our recent fix, it returns OLD answers. Identify any `↑/↓ to scroll` footers that are NOT in the visible pane. |
-| 3 | `autopilot.enabled`? `trust` level? `priorTrust` set? `riskOverride`? |
-| 4 | Most recent failure status. If `parse_error`, retrieve the full `captured_pane`: `sqlite3 ... "SELECT captured_pane FROM autopilot_errors WHERE id = N"` |
-| 5 | Daemon's view — did /btw fire? what's the timing? any `permission_request` storm? |
+| 1 | `autopilot.enabled`? `trust` level? `priorTrust` set? `riskOverride`? `threadId` present? |
+| 2 | Most recent failure status. If `parse_error`, retrieve the full `captured_pane`: `sqlite3 ... "SELECT captured_pane FROM autopilot_errors WHERE id = N"` |
+| 3 | Daemon's view — did Codex App Server restore? what's the timing? any approval request storm? |
 
 ## Reply to the user
 

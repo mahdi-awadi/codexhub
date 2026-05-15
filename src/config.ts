@@ -4,15 +4,21 @@ import { homedir } from 'os'
 import { DEFAULT_AUTOPILOT_DEFAULTS } from './types'
 import type { HubConfig, SessionConfig, TrustLevel, AutopilotDefaults } from './types'
 
-export const HUB_DIR = process.env.CLAUDE_PLUGIN_DATA
+export const HUB_DIR = process.env.CODEXHUB_DATA
   ?? process.env.HUB_DIR
-  ?? join(homedir(), '.claude', 'channels', 'hub')
+  ?? join(homedir(), '.codexhub', 'data')
 
 function defaultConfig(): HubConfig {
   return {
     webPort: 3000,
     telegramToken: '',
+    telegramBotUsername: 'mahdicodexbot',
+    telegramFrontendEnabled: false,
     telegramAllowFrom: [],
+    rubikaToken: '',
+    rubikaBotUsername: 'mahdicodexhub',
+    rubikaAllowFrom: [],
+    rubikaWebhookBase: '',
     defaultTrust: 'ask',
     defaultUploadDir: '.',
   }
@@ -46,10 +52,11 @@ export function loadHubConfig(dir: string = HUB_DIR): HubConfig {
     webHost: raw.webHost,
     browseRoot: raw.browseRoot,
     telegramToken: raw.telegramToken ?? '',
-    telegramBotUsername: raw.telegramBotUsername,
+    telegramBotUsername: raw.telegramBotUsername ?? 'mahdicodexbot',
+    telegramFrontendEnabled: raw.telegramFrontendEnabled ?? true,
     telegramAllowFrom: raw.telegramAllowFrom ?? [],
     rubikaToken: raw.rubikaToken,                     // empty / unset = bot disabled
-    rubikaBotUsername: raw.rubikaBotUsername,         // cosmetic — logs + future @-prefix command parsing
+    rubikaBotUsername: raw.rubikaBotUsername ?? 'mahdicodexhub', // cosmetic — logs + future @-prefix command parsing
     rubikaAllowFrom: raw.rubikaAllowFrom ?? [],       // empty = deny-all (matches Telegram)
     rubikaApiBase: raw.rubikaApiBase,                 // override; defaults to botapi.rubika.ir/v3
     rubikaWebhookBase: raw.rubikaWebhookBase,         // public origin where the daemon is reachable, e.g. "https://hub.tech-gate.online"

@@ -9,7 +9,7 @@ Help the user configure their hub installation.
 
 ## Configuration File
 
-Location: `~/.claude/channels/hub/config.json`
+Location: `~/.codexhub/data/config.json`
 
 Fields:
 - `webPort` (number): Web UI port (default: 3000)
@@ -20,21 +20,7 @@ Fields:
 
 ## Setup Steps
 
-1. Create config: `mkdir -p ~/.claude/channels/hub`
+1. Create config: `mkdir -p ~/.codexhub/data`
 2. Set token: Write config.json with the bot token
 3. Start daemon in tmux: `tmux new-session -d -s hub-daemon "bun run src/daemon.ts"`
 4. Connect Codex: `codex`
-
-## MCP Server Registration
-
-Add to `~/.claude.json`:
-```json
-{
-  "mcpServers": {
-    "hub": {
-      "command": "bun",
-      "args": ["run", "/path/to/channelhub/src/shim.ts"]
-    }
-  }
-}
-```

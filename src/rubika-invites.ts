@@ -1,5 +1,5 @@
 // src/rubika-invites.ts
-// One-time invite codes that bind a Rubika sender_id to a Claude session.
+// One-time invite codes that bind a Rubika sender_id to a Codex session.
 // An owner mints a code, shares it out-of-band, the future guest texts the
 // code to the bot, and the bot pins their senderId → session. Pins persist
 // across daemon restarts via rubika-invites.json next to the rest of hub

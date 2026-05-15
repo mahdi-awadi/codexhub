@@ -12,7 +12,7 @@ export type AutopilotResult =
   | { status: 'timeout'; pane?: string }
 
 export type RunBtwOptions = {
-  rawQuestion?: string      // the original question from Claude, used for risk filter
+  rawQuestion?: string      // the original question from Codex, used for risk filter
   riskKeywords?: readonly string[]
   riskOverride?: boolean    // bypass risk check
 }
@@ -45,7 +45,7 @@ export class AutopilotRunner {
     // Flatten newlines first — tmux treats \n as Enter, which would submit the
     // slash command after the first line only.
     const singleLine = wrappedQuestion.replace(/\s*\n+\s*/g, ' ').trim()
-    // Claude Code's input treats a burst of ~800 chars as a "paste block" and
+    // Codex's input treats a burst of ~800 chars as a "paste block" and
     // the paste captures the trailing Enter, so the /btw never fires. Send the
     // text first (no Enter), then a separate Enter as its own keystroke.
     await this.sm.sendKeysRaw(sessionName, `/btw ${singleLine}`, false)
@@ -65,7 +65,7 @@ export class AutopilotRunner {
     }
 
     // 3b. Scroll the /btw overlay to its TOP before final capture. /btw renders
-    // inline with the rest of Claude's UI in a small viewport — long answers
+    // inline with the rest of Codex's UI in a small viewport — long answers
     // scroll within /btw, and the default position is at the BOTTOM (tail of
     // the answer). The opening (with the actual decision and key reasoning) is
     // off-screen until we scroll up. Send a generous batch of Up arrows so the
@@ -103,7 +103,7 @@ export class AutopilotRunner {
     if (!pane) return { ok: false, reason: `tmux session "${sessionName}" not found or not running` }
     // A permission prompt steals all keystrokes — /btw text would land in the
     // 1/2/3 menu instead of opening the side-question overlay. Detect by the
-    // canonical Claude Code prompt header + the `❯ 1.` numbered selection.
+    // canonical Codex prompt header + the `❯ 1.` numbered selection.
     if (/Do you want to proceed\?/.test(pane) && /^\s*❯\s*1\./m.test(pane)) {
       return { ok: false, reason: 'session is at a permission prompt — answer it first (keystrokes would land in the 1/2/3 picker)' }
     }
@@ -113,10 +113,10 @@ export class AutopilotRunner {
   async probe(sessionName: string, probeTimeoutMs: number = 20_000): Promise<{ ok: boolean; reason?: string }> {
     // Semantic probe: tell the session it's in autopilot and ask for a single-
     // word ack. More informative than `1+1` — confirms the round-trip AND
-    // signals to Claude what mode it's in.
+    // signals to Codex what mode it's in.
     const question = 'You are now in autopilot mode. Reply with only the single word "ready" to confirm side questions are reachable.'
     // Mirror runBtw: send the text first (no Enter), wait, then send Enter as a
-    // separate keystroke so Claude Code's paste-detection cannot capture it.
+    // separate keystroke so Codex's paste-detection cannot capture it.
     await this.sm.sendKeysRaw(sessionName, `/btw ${question}`, false)
     await new Promise(r => setTimeout(r, 150))
     await this.sm.sendKeysRaw(sessionName, '', true)

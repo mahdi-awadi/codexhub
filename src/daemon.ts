@@ -14,7 +14,6 @@ import type { PermissionRequest, Profile, FrontendSource } from './types'
 import { getProfile, resolveSession, injectContext } from './profiles'
 import { detectDrift } from './analysis'
 import { VerificationRunner } from './verification'
-import { AutopilotRunner } from './autopilot'
 import { wrapQuestion, isTrivialReply } from './autopilot-risk'
 import { VetoController } from './veto-controller'
 import { EscalationController } from './escalation-controller'
@@ -45,7 +44,7 @@ async function findChromiumPath(override?: string): Promise<string | null> {
 }
 const lastDriftNotif = new Map<string, number>()
 
-// Auto-fetch file contents when Claude emits a bare save/write path in a reply.
+// Auto-fetch file contents when Codex emits a bare save/write path in a reply.
 const FILE_PATH_PATTERNS: RegExp[] = [
   /saved to:?\s+([`'"]?)([\/~][\w\/.\-]+\.(md|json|yaml|yml|ts|tsx|js|jsx|py|go|rs|txt|toml))\1/i,
   /written to:?\s+([`'"]?)([\/~][\w\/.\-]+\.(md|json|yaml|yml|ts|tsx|js|jsx|py|go|rs|txt|toml))\1/i,
@@ -159,10 +158,6 @@ setInterval(() => errorLog.purgeKeepLast(5000), 60 * 60 * 1000).unref()
 setInterval(() => decisions.purgeKeepLastPerSession(500), 60 * 60 * 1000).unref()
 // Bound visible chat history to last 1000 per session.
 setInterval(() => messages.purgeKeepLastPerSession(1000), 60 * 60 * 1000).unref()
-const autopilotRunner = new AutopilotRunner({
-  screenManager,
-  btwTimeoutMs: autopilotDefaults.btwTimeoutMs,
-})
 const codexExecAutopilotRunner = new CodexExecAutopilotRunner({
   timeoutMs: autopilotDefaults.btwTimeoutMs,
 })
@@ -170,7 +165,7 @@ const codexExecAutopilotRunner = new CodexExecAutopilotRunner({
 function loadProjectPreferences(projectPath: string): string {
   const candidates = [
     join(projectPath, 'autopilot.md'),
-    join(process.env.HOME ?? '', '.claude', 'autopilot.md'),
+    join(HUB_DIR, 'autopilot.md'),
   ]
   for (const p of candidates) {
     try {
@@ -180,24 +175,16 @@ function loadProjectPreferences(projectPath: string): string {
   return ''
 }
 
-function sendAutopilotAnswer(path: string, sessionName: string, answer: string, mode: 'tmux' | 'codex-exec'): void {
-  if (mode === 'codex-exec') {
-    agentBackend.send(path, answer, {
-      source: 'autopilot',
-      frontend: 'web',
-      user: 'autopilot',
-      session: sessionName,
-    }).catch((err) => process.stderr.write(`hub: codex autopilot send failed for ${sessionName}: ${err}\n`))
-    return
-  }
-  socketServer.sendToSession(path, {
-    type: 'channel_message',
-    content: answer,
-    meta: { source: 'autopilot', frontend: 'web' },
-  })
+function sendAutopilotAnswer(path: string, sessionName: string, answer: string): void {
+  agentBackend.send(path, answer, {
+    source: 'autopilot',
+    frontend: 'web',
+    user: 'autopilot',
+    session: sessionName,
+  }).catch((err) => process.stderr.write(`hub: codex autopilot send failed for ${sessionName}: ${err}\n`))
 }
 
-function maybeRunAutopilot(path: string, text: string, mode: 'tmux' | 'codex-exec'): void {
+function maybeRunAutopilot(path: string, text: string, mode: 'codex-exec'): void {
   const session = registry.get(path)
   if (!session) return
   const ap = registry.getAutopilot(path)
@@ -210,8 +197,6 @@ function maybeRunAutopilot(path: string, text: string, mode: 'tmux' | 'codex-exe
 
   const sessionName = session.name
   const projectPath = registry.folderPath(path)
-  const managed = screenManager.getManagedByPath(projectPath)
-  const tmuxName = managed?.sessionName ?? `hub-${sessionName}`
   const prefs = loadProjectPreferences(projectPath)
   const personality = personalities.getForSession(path)
   const wrapped = wrapQuestion(text, prefs, personality
@@ -219,13 +204,7 @@ function maybeRunAutopilot(path: string, text: string, mode: 'tmux' | 'codex-exe
     : undefined)
   const riskKeywords = ap.riskKeywords ?? autopilotDefaults.riskKeywords
   const apT0 = Date.now()
-  const run = mode === 'codex-exec'
-    ? codexExecAutopilotRunner.run(projectPath, wrapped, {
-      rawQuestion: text,
-      riskKeywords,
-      riskOverride: ap.riskOverride,
-    })
-    : autopilotRunner.runBtw(tmuxName, wrapped, {
+  const run = codexExecAutopilotRunner.run(projectPath, wrapped, {
       rawQuestion: text,
       riskKeywords,
       riskOverride: ap.riskOverride,
@@ -274,7 +253,7 @@ function maybeRunAutopilot(path: string, text: string, mode: 'tmux' | 'codex-exe
       const vetoMs = ap.vetoWindowMs ?? autopilotDefaults.vetoWindowMs
       if (vetoMs > 0) {
         const veto = vetoController.schedule(path, sessionName, result.answer, vetoMs, (v) => {
-          sendAutopilotAnswer(v.path, v.sessionName, v.draft, mode)
+          sendAutopilotAnswer(v.path, v.sessionName, v.draft)
           telegramFrontend?.deliverToUser(v.sessionName, `🤖 Autopilot sent: ${v.draft}`)
           webFrontend?.deliverToUser(v.sessionName, `🤖 Autopilot sent: ${v.draft}`)
           rubikaFrontend?.deliverToUser(v.sessionName, `🤖 Autopilot sent: ${v.draft}`)
@@ -283,7 +262,7 @@ function maybeRunAutopilot(path: string, text: string, mode: 'tmux' | 'codex-exe
         webFrontend?.deliverAutopilotDraft(path, sessionName, veto.draft, vetoMs)
         rubikaFrontend?.deliverAutopilotDraft(sessionName, veto.draft)
       } else {
-        sendAutopilotAnswer(path, sessionName, result.answer, mode)
+        sendAutopilotAnswer(path, sessionName, result.answer)
         telegramFrontend?.deliverToUser(sessionName, `🤖 Autopilot answered: ${result.answer}`)
         webFrontend?.deliverToUser(sessionName, `🤖 Autopilot answered: ${result.answer}`)
         rubikaFrontend?.deliverToUser(sessionName, `🤖 Autopilot answered: ${result.answer}`)
@@ -294,7 +273,7 @@ function maybeRunAutopilot(path: string, text: string, mode: 'tmux' | 'codex-exe
         : 'other'
       escalationController.record({
         path, sessionName, rawQuestion: text, wrappedQuestion: wrapped,
-        tmuxName: mode === 'codex-exec' ? `codex-exec:${sessionName}` : tmuxName,
+        tmuxName: `codex-exec:${sessionName}`,
         reason: result.reason, reasonKind, createdAt: Date.now(),
       })
       telegramFrontend?.deliverToUser(sessionName, `🟡 Autopilot escalated: ${result.reason}`)
@@ -304,7 +283,7 @@ function maybeRunAutopilot(path: string, text: string, mode: 'tmux' | 'codex-exe
       const kind: 'parse_error' | 'timeout' = result.status
       escalationController.record({
         path, sessionName, rawQuestion: text, wrappedQuestion: wrapped,
-        tmuxName: mode === 'codex-exec' ? `codex-exec:${sessionName}` : tmuxName,
+        tmuxName: `codex-exec:${sessionName}`,
         reason: `${result.status}: ${mode} did not complete`, reasonKind: kind,
         createdAt: Date.now(),
       })
@@ -435,7 +414,7 @@ socketServer.on('tool_call', (path: string, name: string, args: Record<string, u
       }
     }
 
-    // Auto-fetch file content when Claude emits a bare save/write path.
+    // Auto-fetch file content when Codex emits a bare save/write path.
     // Scope strictly to the session's project root so a prompt-injected
     // reply can't trick us into reading /home/you/.ssh/id_rsa and forwarding
     // it to the user's Telegram.
@@ -460,7 +439,6 @@ socketServer.on('tool_call', (path: string, name: string, args: Record<string, u
         }
       }
     }
-    maybeRunAutopilot(path, text, 'tmux')
   } else if (name === 'edit_message') {
     telegramFrontend?.deliverToUser(session.name, `(edited) ${args.text as string}`)
     webFrontend?.deliverToUser(session.name, `(edited) ${args.text as string}`)
@@ -486,7 +464,7 @@ socketServer.on('tool_call', (path: string, name: string, args: Record<string, u
       result: { sessions: all },
     })
   } else if (name === 'send_to_session') {
-    // Cross-session routing — Claude in one session sends a message directly
+    // Cross-session routing — Codex in one session sends a message directly
     // to another session via the daemon, without the user having to relay.
     const targetName = String(args.name ?? '')
     const text = String(args.text ?? '')
@@ -519,7 +497,7 @@ socketServer.on('tool_call', (path: string, name: string, args: Record<string, u
           router.routeToSession(targetName, text, 'cli', `session-${session.name}`)
           result = { ok: true }
           // Surface the cross-session relay to the user too, so it's visible
-          // in their dashboard and not silently moving between Claudes.
+          // in their dashboard and not silently moving between Codexs.
           const note = `↪ ${session.name} → ${targetName}: ${text}`
           telegramFrontend?.deliverToUser(session.name, note)
           webFrontend?.deliverToUser(session.name, note)
@@ -595,7 +573,6 @@ async function start(): Promise<void> {
     taskMonitor,
     vetoController,
     escalationController,
-    autopilotRunner,
     errorLog,
     personalities,
     decisions,
@@ -604,7 +581,7 @@ async function start(): Promise<void> {
   await webFrontend.start()
   process.stderr.write(`hub: web UI at http://localhost:${webFrontend.port}\n`)
 
-  if (config.telegramToken) {
+  if (config.telegramToken && config.telegramFrontendEnabled !== false) {
     if (config.telegramAllowFrom.length === 0) {
       // Refuse to start. An empty allowlist used to mean "allow all", which
       // makes a mis-configured bot publicly reachable by any Telegram user —
@@ -627,14 +604,15 @@ async function start(): Promise<void> {
         verificationRunner,
         vetoController,
         escalationController,
-        autopilotRunner,
       })
       telegramFrontend.start().catch(err => {
         process.stderr.write(`hub: telegram failed to start: ${err}\n`)
       })
     }
-  } else {
+  } else if (!config.telegramToken) {
     process.stderr.write('hub: no telegram token — skipping telegram frontend\n')
+  } else {
+    process.stderr.write('hub: telegram frontend disabled — web login still uses configured Telegram auth\n')
   }
 
   // ── Rubika frontend (webhook-based, MVP) ─────────────────────────────────
@@ -663,7 +641,6 @@ async function start(): Promise<void> {
         taskMonitor,
         verificationRunner,
         vetoController,
-        autopilotRunner,
         apiBase: config.rubikaApiBase,
         webhookBase: config.rubikaWebhookBase,
         pollingIntervalMs: config.rubikaPollingMs,

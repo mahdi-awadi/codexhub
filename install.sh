@@ -18,8 +18,7 @@ NC='\033[0m'
 # Config
 REPO="mahdi-awadi/codexhub"
 INSTALL_DIR="${CODEXHUB_DIR:-$HOME/.codexhub}"
-CONFIG_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/channels/hub}"
-CLAUDE_CONFIG="$HOME/.claude.json"
+CONFIG_DIR="${CODEXHUB_DATA:-$HOME/.codexhub/data}"
 
 log() { echo -e "${BLUE}==>${NC} ${BOLD}$*${NC}"; }
 ok()  { echo -e "${GREEN}✓${NC} $*"; }
@@ -78,19 +77,10 @@ if ! command -v codex >/dev/null 2>&1; then
   echo "  (You can still install CodexHub; set up Codex later)"
 fi
 
-# 6. Check jq (optional, used for config edits)
-HAVE_JQ=0
-if command -v jq >/dev/null 2>&1; then
-  HAVE_JQ=1
-  ok "jq: $(jq --version)"
-else
-  warn "jq not found (recommended for automatic config updates)"
-fi
-
 echo ""
 
 # ─── Clone / Update ──────────────────────────────────────────────────────────
-log "Installing ChannelHub to $INSTALL_DIR"
+log "Installing CodexHub to $INSTALL_DIR"
 
 if [ -d "$INSTALL_DIR/.git" ]; then
   ok "Existing install found, updating..."
@@ -117,7 +107,13 @@ else
 {
   "webPort": 3000,
   "telegramToken": "",
+  "telegramBotUsername": "mahdicodexbot",
+  "telegramFrontendEnabled": false,
   "telegramAllowFrom": [],
+  "rubikaToken": "",
+  "rubikaBotUsername": "mahdicodexhub",
+  "rubikaAllowFrom": [],
+  "rubikaWebhookBase": "",
   "defaultTrust": "ask",
   "defaultUploadDir": "."
 }
@@ -126,57 +122,21 @@ EOF
   ok "Created config template at $CONFIG_DIR/config.json"
 fi
 
-# ─── Register MCP Server in ~/.claude.json ───────────────────────────────────
-log "Registering MCP server"
-if [ ! -f "$CLAUDE_CONFIG" ]; then
-  warn "$CLAUDE_CONFIG not found — Codex may not be set up yet"
-  echo "  After installing Codex, add this to $CLAUDE_CONFIG manually:"
-  echo ""
-  cat << EOF
-  {
-    "mcpServers": {
-      "hub": {
-        "command": "bun",
-        "args": ["run", "$INSTALL_DIR/src/shim.ts"]
-      }
-    }
-  }
-EOF
-elif [ "$HAVE_JQ" = "1" ]; then
-  # Idempotent update using jq
-  TMP=$(mktemp)
-  jq --arg path "$INSTALL_DIR/src/shim.ts" \
-    '.mcpServers = (.mcpServers // {}) | .mcpServers.hub = {"command": "bun", "args": ["run", $path]}' \
-    "$CLAUDE_CONFIG" > "$TMP"
-  mv "$TMP" "$CLAUDE_CONFIG"
-  ok "Added hub MCP server to $CLAUDE_CONFIG"
-else
-  warn "Install jq to automatically update $CLAUDE_CONFIG"
-  echo "  Or add this manually to the mcpServers section:"
-  echo ""
-  cat << EOF
-  "hub": {
-    "command": "bun",
-    "args": ["run", "$INSTALL_DIR/src/shim.ts"]
-  }
-EOF
-fi
-
 # ─── Install CLI ─────────────────────────────────────────────────────────────
-log "Installing channelhub command"
+log "Installing codexhub command"
 BIN_DIR="$HOME/.local/bin"
 mkdir -p "$BIN_DIR"
 
-cat > "$BIN_DIR/channelhub" << EOF
+cat > "$BIN_DIR/codexhub" << EOF
 #!/usr/bin/env bash
-# ChannelHub CLI wrapper
+# CodexHub CLI wrapper
 INSTALL_DIR="$INSTALL_DIR"
 
 case "\${1:-}" in
   start)
     tmux kill-session -t hub-daemon 2>/dev/null || true
     tmux new-session -d -s hub-daemon "bun run \$INSTALL_DIR/src/daemon.ts"
-    echo "ChannelHub daemon started (tmux session: hub-daemon)"
+    echo "CodexHub daemon started (tmux session: hub-daemon)"
     ;;
   stop)
     tmux kill-session -t hub-daemon 2>/dev/null && echo "Stopped" || echo "Not running"
@@ -202,7 +162,7 @@ case "\${1:-}" in
     ;;
   update)
     cd "\$INSTALL_DIR" && git pull && bun install --no-summary
-    echo "Updated. Run 'channelhub restart' to apply."
+    echo "Updated. Run 'codexhub restart' to apply."
     ;;
   *)
     # Pass through to the hub CLI tool
@@ -210,8 +170,8 @@ case "\${1:-}" in
     ;;
 esac
 EOF
-chmod +x "$BIN_DIR/channelhub"
-ok "Installed: $BIN_DIR/channelhub"
+chmod +x "$BIN_DIR/codexhub"
+ok "Installed: $BIN_DIR/codexhub"
 
 # Check if BIN_DIR is in PATH
 if ! echo "$PATH" | grep -q "$BIN_DIR"; then
@@ -222,7 +182,7 @@ fi
 
 # ─── Done ────────────────────────────────────────────────────────────────────
 echo ""
-echo -e "${GREEN}${BOLD}✓ ChannelHub installed successfully${NC}"
+echo -e "${GREEN}${BOLD}✓ CodexHub installed successfully${NC}"
 echo ""
 echo -e "${BOLD}Next steps:${NC}"
 echo ""
@@ -232,7 +192,7 @@ echo "     - Get your user ID from @userinfobot"
 echo "     - Edit: $CONFIG_DIR/config.json"
 echo ""
 echo "  2. Start the daemon:"
-echo "     ${BLUE}channelhub start${NC}"
+echo "     ${BLUE}codexhub start${NC}"
 echo ""
 echo "  3. Connect Codex (from any project):"
 echo "     ${BLUE}codex${NC}"
@@ -241,11 +201,11 @@ echo "  4. Open the web dashboard:"
 echo "     ${BLUE}http://localhost:3000${NC}"
 echo ""
 echo -e "${BOLD}Commands:${NC}"
-echo "  channelhub start    # Start daemon"
-echo "  channelhub stop     # Stop daemon"
-echo "  channelhub status   # Check status"
-echo "  channelhub attach   # View daemon logs"
-echo "  channelhub update   # Update to latest"
-echo "  channelhub list     # List sessions"
+echo "  codexhub start    # Start daemon"
+echo "  codexhub stop     # Stop daemon"
+echo "  codexhub status   # Check status"
+echo "  codexhub attach   # View daemon logs"
+echo "  codexhub update   # Update to latest"
+echo "  codexhub list     # List sessions"
 echo ""
 echo "Documentation: https://github.com/$REPO"

@@ -74,7 +74,7 @@ const DEFAULT_CONSTRAINT_BLOCK = [
 
 // Optional per-session personality. The wrapper splices its system_prompt
 // in place of the default constraint block — everything else (header,
-// preferences, "Question from Claude:" trailer) stays the same.
+// preferences, "Question from Codex:" trailer) stays the same.
 export type WrapPersonality = {
   name: string
   systemPrompt: string
@@ -101,7 +101,7 @@ export function wrapQuestion(
     personalityHeader,
     constraintBlock,
     prefsBlock,
-    'Question from Claude:',
+    'Question from Codex:',
     rawQuestion,
   ].filter(s => s !== '').join('\n')
 }

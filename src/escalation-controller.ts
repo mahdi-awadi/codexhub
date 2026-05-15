@@ -6,7 +6,7 @@
 export type PendingEscalation = {
   path: string
   sessionName: string
-  rawQuestion: string       // Claude's original outgoing message
+  rawQuestion: string       // Codex's original outgoing message
   wrappedQuestion: string   // the autopilot-wrapped prompt fed to /btw
   tmuxName: string          // tmux session name for re-running /btw
   reason: string            // why we escalated (risk keyword / timeout / ...)

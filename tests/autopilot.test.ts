@@ -204,7 +204,7 @@ class StaticScreenManager {
 }
 
 describe('AutopilotRunner.quickProbe', () => {
-  test('returns ok when pane shows the Claude idle prompt', async () => {
+  test('returns ok when pane shows the Codex idle prompt', async () => {
     const idle = `
 ────────────────────────────────────
 ❯
@@ -216,7 +216,7 @@ describe('AutopilotRunner.quickProbe', () => {
     expect(r.ok).toBe(true)
   })
 
-  test('returns ok when pane shows Claude busy — /btw can still queue', async () => {
+  test('returns ok when pane shows Codex busy — /btw can still queue', async () => {
     const busy = `
 ❯ doing some long task
   ✻ Hatching… (15s)

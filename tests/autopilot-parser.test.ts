@@ -108,7 +108,7 @@ describe('parseBtwAnswer', () => {
 	test('multi-paragraph answer with blank lines between paragraphs is preserved (real-world bug)', () => {
 		// The autopilot prompt explicitly asks for multi-paragraph descriptive
 		// answers. The original walker stopped at the first blank line, so only
-		// the LAST paragraph reached Claude — silently truncating reasoning.
+		// the LAST paragraph reached Codex — silently truncating reasoning.
 		const pane = `
   /btw You are acting as the user's delegate…
 
@@ -194,7 +194,7 @@ describe('isOverlaySettled', () => {
 		expect(isOverlaySettled('something\n❯\n')).toBe(false)
 	})
 
-	// Real-world bug: when the parent Claude session is busy with another task,
+	// Real-world bug: when the parent Codex session is busy with another task,
 	// "esc to interrupt" appears in the MAIN pane status line BELOW the /btw
 	// overlay footer. The spinner check must only consider the overlay region
 	// (everything BEFORE the footer), otherwise the probe never sees a settled

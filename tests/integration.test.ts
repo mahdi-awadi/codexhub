@@ -78,14 +78,14 @@ describe('integration: shim → daemon flow', () => {
     expect(regMsg.type).toBe('registered')
     expect(regMsg.sessionName).toBe('myproject')
 
-    router.routeToSession('myproject', 'hello claude', 'web', 'user1')
+    router.routeToSession('myproject', 'hello codex', 'web', 'user1')
 
     const msgData = await new Promise<string>(resolve => {
       sock.once('data', chunk => resolve(chunk.toString()))
     })
     const channelMsg = JSON.parse(msgData.trim())
     expect(channelMsg.type).toBe('channel_message')
-    expect(channelMsg.content).toBe('hello claude')
+    expect(channelMsg.content).toBe('hello codex')
 
     sock.write(JSON.stringify({ type: 'tool_call', name: 'reply', arguments: { text: 'hello human' } }) + '\n')
 

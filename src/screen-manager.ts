@@ -21,9 +21,6 @@ type ManagedSession = {
   profileName?: string
 }
 
-const CHANNELS_FLAG = '--dangerously-load-development-channels server:hub'
-const TEAM_ENV = 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1'
-
 export type ResumeSpec =
   | { mode: 'continue' }
   | { mode: 'session', id: string }
@@ -32,22 +29,6 @@ export function isValidSessionId(id: string): boolean {
   return /^[0-9a-f-]{8,64}$/i.test(id)
 }
 
-export function buildClaudeCmd(opts: { team: boolean; resume?: ResumeSpec }): string {
-  let flag = ''
-  if (opts.resume?.mode === 'continue') {
-    flag = '--continue '
-  } else if (opts.resume?.mode === 'session') {
-    if (!isValidSessionId(opts.resume.id)) {
-      throw new Error(`invalid session id: ${opts.resume.id}`)
-    }
-    flag = `--resume ${opts.resume.id} `
-  }
-  const base = `claude ${flag}${CHANNELS_FLAG}`
-  return opts.team ? `${TEAM_ENV} ${base}` : base
-}
-
-// Team-mode command is referenced by spawnTeam / addTeammate; keep as a constant.
-const CLAUDE_TEAM_CMD = buildClaudeCmd({ team: true })
 const CONFIRM_DELAY = 1500
 const CONFIRM_RETRIES = 20            // ~20s window for the warning to render under load
 const CONFIRM_INTERVAL = 1000
@@ -67,19 +48,7 @@ export class ScreenManager {
     profileName?: string,
     resume?: ResumeSpec,
   ): Promise<void> {
-    const sessionName = `hub-${name}`
-    ensureProjectDir(projectPath)
-
-    // Kill existing session if any
-    try { await $`tmux kill-session -t ${sessionName}`.quiet() } catch {}
-
-    // Create detached tmux session running Claude
-    const cmd = buildClaudeCmd({ team: false, resume })
-    await $`tmux new-session -d -s ${sessionName} -c ${projectPath} ${cmd}`.quiet()
-    this.managed.set(name, { sessionName, projectPath, respawnEnabled: true, profileName })
-
-    // Auto-confirm the development channels warning, then send instructions if any
-    this.autoConfirm(sessionName, instructions)
+    throw new Error('ScreenManager no longer launches agents; use the Codex session backend')
   }
 
   private async autoConfirm(sessionName: string, initialPrompt?: string): Promise<void> {
@@ -182,7 +151,7 @@ export class ScreenManager {
     } else {
       // Unmanaged session — best effort: assume tmux is `hub-${name}`, which is
       // the only shape the shim accepts (see shim.getHubTmuxSession). Send the
-      // exit sequence so Claude actually exits instead of just being orphaned.
+      // exit sequence so Codex actually exits instead of just being orphaned.
       await this.gracefulExitTmux(`hub-${name}`)
     }
   }
@@ -206,7 +175,7 @@ export class ScreenManager {
 
     if (!(await this.isSessionRunning(tmuxSessionName))) return
 
-    // Fallback: Claude didn't respond in time — hard-kill tmux.
+    // Fallback: Codex didn't respond in time — hard-kill tmux.
     try { await $`tmux kill-session -t ${tmuxSessionName}`.quiet() } catch {}
   }
 
@@ -238,67 +207,16 @@ export class ScreenManager {
     const entry = this.managed.get(name)
     if (!entry || !entry.respawnEnabled) return
 
-    this.respawnTimers.set(name, setTimeout(async () => {
-      this.respawnTimers.delete(name)
-      if (!entry.respawnEnabled) return
-      try {
-        await this.spawn(name, entry.projectPath)
-        process.stderr.write(`hub: respawned ${name}\n`)
-      } catch (err) {
-        process.stderr.write(`hub: failed to respawn ${name}: ${err}\n`)
-      }
-    }, 3000))
+    entry.respawnEnabled = false
+    process.stderr.write(`hub: tmux respawn disabled for ${name}; Codex sessions restore through the backend\n`)
   }
 
   async spawnTeam(name: string, projectPath: string, size: number, instructions?: string, profileName?: string): Promise<void> {
-    ensureProjectDir(projectPath)
-    const teammateNames = Array.from({ length: size - 1 }, (_, i) => `${name}-${i + 2}`)
-    const tagsSuffix = instructions ? ` ${instructions}` : ''
-    const leadPrompt = `You are the team lead "${name}". Create a team and spawn ${size - 1} teammates. Assign them names: ${teammateNames.join(', ')}. Wait for them to connect, then coordinate the work.${tagsSuffix}`
-
-    // Spawn lead first
-    const leadSession = `hub-${name}`
-    try { await $`tmux kill-session -t ${leadSession}`.quiet() } catch {}
-    await $`tmux new-session -d -s ${leadSession} -c ${projectPath} ${CLAUDE_TEAM_CMD}`.quiet()
-    this.managed.set(name, { sessionName: leadSession, projectPath, respawnEnabled: true, profileName })
-    this.autoConfirm(leadSession, leadPrompt)
-
-    // Wait for lead to initialize and create the team
-    await new Promise(r => setTimeout(r, 8000))
-
-    // Spawn teammates — they connect to the same folder, Claude's team protocol handles joining
-    for (let i = 2; i <= size; i++) {
-      const tmName = `${name}-${i}`
-      const tmSession = `hub-${tmName}`
-      try { await $`tmux kill-session -t ${tmSession}`.quiet() } catch {}
-      await $`tmux new-session -d -s ${tmSession} -c ${projectPath} ${CLAUDE_TEAM_CMD}`.quiet()
-      this.managed.set(tmName, { sessionName: tmSession, projectPath, respawnEnabled: true, profileName })
-      this.autoConfirm(tmSession)
-      await new Promise(r => setTimeout(r, 3000))
-    }
+    throw new Error('Teams are not available in CodexHub v1')
   }
 
   async addTeammate(leadName: string): Promise<string | null> {
-    const leadEntry = this.managed.get(leadName)
-    if (!leadEntry) return null
-
-    let index = 2
-    while (this.managed.has(`${leadName}-${index}`)) index++
-
-    const tmName = `${leadName}-${index}`
-    const tmSession = `hub-${tmName}`
-    try { await $`tmux kill-session -t ${tmSession}`.quiet() } catch {}
-    await $`tmux new-session -d -s ${tmSession} -c ${leadEntry.projectPath} ${CLAUDE_TEAM_CMD}`.quiet()
-    this.managed.set(tmName, { sessionName: tmSession, projectPath: leadEntry.projectPath, respawnEnabled: true })
-    this.autoConfirm(tmSession)
-
-    // Tell the lead about the new teammate
-    const leadSession = `hub-${leadName}`
-    this.waitForReady(tmSession).then(() => {
-      this.sendPrompt(leadSession, `A new teammate "${tmName}" has joined. Assign them work.`)
-    })
-
-    return tmName
+    return null
   }
 
   forgetManaged(name: string): void {

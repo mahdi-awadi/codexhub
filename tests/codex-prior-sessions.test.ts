@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
-import { encodeProjectPath, isInsideProjectsRoot, listPriorSessions } from '../src/claude-sessions'
+import { encodeProjectPath, isInsideProjectsRoot, listPriorSessions } from '../src/codex/prior-sessions'
 import { homedir } from 'os'
 import { join } from 'path'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, utimesSync } from 'fs'
@@ -20,7 +20,7 @@ describe('encodeProjectPath', () => {
 })
 
 describe('isInsideProjectsRoot', () => {
-  const ROOT = join(homedir(), '.claude', 'projects')
+  const ROOT = join(homedir(), '.codex', 'projects')
 
   test('accepts a direct child directory', () => {
     expect(isInsideProjectsRoot(join(ROOT, '-home-user-proj'))).toBe(true)
@@ -46,7 +46,7 @@ describe('listPriorSessions', () => {
   let storageDir: string
 
   beforeEach(() => {
-    tmpProjectsRoot = mkdtempSync(join(tmpdir(), 'claude-sessions-'))
+    tmpProjectsRoot = mkdtempSync(join(tmpdir(), 'codex-sessions-'))
     storageDir = join(tmpProjectsRoot, encodeProjectPath(PROJECT_CWD))
     mkdirSync(storageDir, { recursive: true })
   })

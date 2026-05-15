@@ -7,7 +7,7 @@ description: Manage hub access — view allowed users, add or remove Telegram us
 
 ## View Current Access
 
-Read `~/.claude/channels/hub/config.json` and show the `telegramAllowFrom` array.
+Read `~/.codexhub/data/config.json` and show the `telegramAllowFrom` array.
 
 ## Add a User
 

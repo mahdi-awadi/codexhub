@@ -2213,6 +2213,32 @@ describe('RubikaFrontend polling — pollNow processes new updates', () => {
     expect(router.calls[0]).toMatchObject({ sessionName: 'sap', text: 'hello from poll', frontend: 'rubika', user: 'u1' })
     await r.stop()
   })
+
+  test('pollNow does not route a message already delivered by webhook', async () => {
+    const registry = new SessionRegistry({ defaultTrust: 'ask', defaultUploadDir: '.' })
+    registry.register('/p/sap:0', { name: 'sap' })
+    const router = new StubRouter()
+    const update = { type: 'NewMessage', chat_id: 'chat-u1', new_message: { message_id: 'm1', text: 'hello once', time: '2', is_edited: false, sender_type: 'User', sender_id: 'u1', aux_data: { start_id: null, button_id: null } } }
+    const sender = async (method: string, _body: unknown) => {
+      if (method === 'getUpdates') return { updates: [update], next_offset_id: 'offset-99' }
+      return {}
+    }
+    const r = new RubikaFrontend({
+      token: 't',
+      allowFrom: ['u1'],
+      registry,
+      router: router as any,
+      sender,
+      pollingIntervalMs: 0,
+    })
+
+    r.handleWebhook({ update: update as RubikaUpdateBody['update'] })
+    await r.pollNow()
+
+    expect(router.calls.length).toBe(1)
+    expect(router.calls[0]).toMatchObject({ sessionName: 'sap', text: 'hello once', frontend: 'rubika', user: 'u1' })
+    await r.stop()
+  })
 })
 
 describe('RubikaFrontend polling — survives a getUpdates failure', () => {
@@ -2871,19 +2897,13 @@ describe('RubikaFrontend /invite, /unpin, claim flow', () => {
   })
 })
 
-// ── Webhook vs continuous polling mutual exclusion ───────────────────────────
-// Bug background: the daemon used to register a webhook with Rubika AND ALSO
-// run a 2-second getUpdates poll loop. Rubika is not telegram — it does not
-// treat the two as mutually exclusive, so every inbound message was processed
-// twice (once via webhook POST, once via the next poll batch). Claude saw each
-// user message twice and replied twice; the user got the same reply twice.
-//
-// Contract now: webhook AND continuous polling are mutually exclusive at the
-// daemon level. Webhook is preferred when registered; polling is the fallback.
-// The bootstrap drain is unrelated and runs unchanged.
+// ── Webhook plus continuous polling ─────────────────────────────────────────
+// Rubika can queue updates without POSTing them to the registered webhook.
+// Keep the dedicated webhook registered, but also poll getUpdates and dedupe
+// by Rubika message_id so webhook-delivered messages are not processed twice.
 
-describe('RubikaFrontend.start — webhook vs continuous polling are mutually exclusive', () => {
-  test('with webhook successfully registered, continuous polling does NOT start', async () => {
+describe('RubikaFrontend.start — webhook plus continuous polling', () => {
+  test('with webhook successfully registered, continuous polling also starts', async () => {
     const registry = new SessionRegistry({ defaultTrust: 'ask', defaultUploadDir: '.' })
     const router = new StubRouter()
     const sender = new FakeSender()
@@ -2898,7 +2918,7 @@ describe('RubikaFrontend.start — webhook vs continuous polling are mutually ex
       pollingIntervalMs: 1000,
     })
     await r.start()
-    expect(r.isContinuousPollingActive()).toBe(false)
+    expect(r.isContinuousPollingActive()).toBe(true)
     await r.stop()
   })
 

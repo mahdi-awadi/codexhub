@@ -21,8 +21,30 @@ describe('config', () => {
     expect(config.webPort).toBe(3000)
     expect(config.defaultTrust).toBe('ask')
     expect(config.telegramToken).toBe('')
+    expect(config.telegramBotUsername).toBe('mahdicodexbot')
+    expect(config.telegramFrontendEnabled).toBe(false)
     expect(config.telegramAllowFrom).toEqual([])
+    expect(config.rubikaBotUsername).toBe('mahdicodexhub')
+    expect(config.rubikaAllowFrom).toEqual([])
     expect(config.defaultUploadDir).toBe('.')
+  })
+
+  test('loadHubConfig keeps legacy configs with telegram frontend enabled', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cfg-telegram-legacy-'))
+    try {
+      writeFileSync(join(dir, 'config.json'), JSON.stringify({
+        webPort: 3000,
+        defaultTrust: 'ask',
+        defaultUploadDir: '.',
+        telegramToken: '123:AAH',
+        telegramBotUsername: 'codexhub_bot',
+        telegramAllowFrom: ['123'],
+      }))
+      const cfg = loadHubConfig(dir)
+      expect(cfg.telegramFrontendEnabled).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   test('saveHubConfig and loadHubConfig roundtrip', () => {
@@ -115,14 +137,14 @@ test('loadHubConfig reads rubika section', () => {
       telegramToken: '',
       telegramAllowFrom: [],
       rubikaToken: 'rubika-token',
-      rubikaBotUsername: 'channelhub_bot',
+      rubikaBotUsername: 'mahdicodexbot',
       rubikaAllowFrom: ['sender-1'],
       rubikaApiBase: 'https://rubika.example/api',
       rubikaWebhookBase: 'https://hub.example',
     }))
     const cfg = loadHubConfig(dir)
     expect(cfg.rubikaToken).toBe('rubika-token')
-    expect(cfg.rubikaBotUsername).toBe('channelhub_bot')
+    expect(cfg.rubikaBotUsername).toBe('mahdicodexbot')
     expect(cfg.rubikaAllowFrom).toEqual(['sender-1'])
     expect(cfg.rubikaApiBase).toBe('https://rubika.example/api')
     expect(cfg.rubikaWebhookBase).toBe('https://hub.example')

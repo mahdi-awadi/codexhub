@@ -59,6 +59,29 @@ describe('WebFrontend', () => {
     expect(text).toContain('<!DOCTYPE html>')
   })
 
+  test('GET / injects Telegram bot username into login widget', async () => {
+    await web.stop()
+    web = new WebFrontend({
+      port: 0,
+      registry,
+      router: null as any,
+      permissions: null as any,
+      socketServer: null as any,
+      screenManager: null as any,
+      telegramToken: TOKEN,
+      telegramBotUsername: 'codexhub_bot',
+      telegramAllowFrom: [ALLOWED_USER],
+      taskMonitor: null,
+    })
+    await web.start()
+
+    const res = await fetch(`http://localhost:${web.port}/`)
+    expect(res.status).toBe(200)
+    const text = await res.text()
+    expect(text).toContain('data-telegram-login\', \'codexhub_bot\'')
+    expect(text).not.toContain('__TELEGRAM_BOT_USERNAME__')
+  })
+
   test('GET /api/peek/:name requires auth', async () => {
     const res = await fetch(`http://localhost:${web.port}/api/peek/frontend`)
     expect(res.status).toBe(401)

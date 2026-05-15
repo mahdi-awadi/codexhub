@@ -32,14 +32,22 @@ describe('Messages', () => {
     expect(rows[0]?.files).toBeUndefined()
   })
 
-  test('record + recent round-trip claude message with file attachments', () => {
+  test('record + recent round-trip assistant message with file attachments', () => {
     m.record({
-      ts: 2000, sessionName: 'sap', role: 'claude',
+      ts: 2000, sessionName: 'sap', role: 'assistant',
       text: 'see attached', files: ['/tmp/foo.png', '/tmp/bar.md'],
     })
     const [row] = m.recent({ session: 'sap' })
-    expect(row?.role).toBe('claude')
+    expect(row?.role).toBe('assistant')
     expect(row?.files).toEqual(['/tmp/foo.png', '/tmp/bar.md'])
+  })
+
+  test('recent maps legacy assistant role values', () => {
+    handle.db.prepare(
+      `INSERT INTO messages (ts, session_name, role, text, files_json) VALUES (?, ?, ?, ?, ?)`,
+    ).run(3000, 'sap', 'claude', 'legacy value', null)
+    const [row] = m.recent({ session: 'sap' })
+    expect(row?.role).toBe('assistant')
   })
 
   test('recent returns newest-first', () => {
