@@ -14,15 +14,19 @@ export type RubikaInvite = {
   sessionName: string
   createdAt: number
   expiresAt: number
+  role: RubikaInviteRole
 }
+
+export type RubikaInviteRole = 'user' | 'admin'
 
 export type RubikaPin = {
   sessionName: string
   claimedAt: number
+  role: RubikaInviteRole
 }
 
 type StoreFile = {
-  pendingInvites: Record<string, { sessionName: string; createdAt: number; expiresAt: number }>
+  pendingInvites: Record<string, { sessionName: string; createdAt: number; expiresAt: number; role?: RubikaInviteRole }>
   pins: Record<string, RubikaPin>
 }
 
@@ -41,7 +45,7 @@ export class RubikaInviteStore {
   private readonly path: string
   private readonly now: () => number
   private readonly ttlMs: number
-  private pendingInvites: Map<string, { sessionName: string; createdAt: number; expiresAt: number }> = new Map()
+  private pendingInvites: Map<string, { sessionName: string; createdAt: number; expiresAt: number; role: RubikaInviteRole }> = new Map()
   private pins: Map<string, RubikaPin> = new Map()
 
   constructor(opts: RubikaInviteStoreOpts) {
@@ -67,6 +71,7 @@ export class RubikaInviteStore {
             sessionName: inv.sessionName,
             createdAt: typeof inv.createdAt === 'number' ? inv.createdAt : 0,
             expiresAt: typeof inv.expiresAt === 'number' ? inv.expiresAt : 0,
+            role: this.normalizeRole(inv.role),
           })
         }
       }
@@ -77,6 +82,7 @@ export class RubikaInviteStore {
           this.pins.set(sid, {
             sessionName: pin.sessionName,
             claimedAt: typeof pin.claimedAt === 'number' ? pin.claimedAt : 0,
+            role: this.normalizeRole(pin.role),
           })
         }
       }
@@ -104,7 +110,11 @@ export class RubikaInviteStore {
     }
   }
 
-  mintInvite(sessionName: string, ttlMsOverride?: number): string {
+  private normalizeRole(role: unknown): RubikaInviteRole {
+    return role === 'admin' ? 'admin' : 'user'
+  }
+
+  mintInvite(sessionName: string, ttlMsOverride?: number, role: RubikaInviteRole = 'user'): string {
     const code = this.generateCode()
     const createdAt = this.now()
     const ttl = ttlMsOverride ?? this.ttlMs
@@ -112,6 +122,7 @@ export class RubikaInviteStore {
       sessionName,
       createdAt,
       expiresAt: createdAt + ttl,
+      role: this.normalizeRole(role),
     })
     this.save()
     return code
@@ -130,13 +141,18 @@ export class RubikaInviteStore {
       return null
     }
     this.pendingInvites.delete(upper)
-    this.pins.set(senderId, { sessionName: inv.sessionName, claimedAt: this.now() })
+    this.pins.set(senderId, { sessionName: inv.sessionName, claimedAt: this.now(), role: inv.role })
     this.save()
     return inv.sessionName
   }
 
   getPin(senderId: string): string | null {
     return this.pins.get(senderId)?.sessionName ?? null
+  }
+
+  getPinInfo(senderId: string): RubikaPin | null {
+    const pin = this.pins.get(senderId)
+    return pin ? { ...pin } : null
   }
 
   unpin(senderId: string): boolean {

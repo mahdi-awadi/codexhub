@@ -2799,6 +2799,28 @@ describe('RubikaFrontend /invite, /unpin, claim flow', () => {
     // And it must be a real pending invite.
     expect(store.peekInvite(match![0])).not.toBeNull()
     expect(store.peekInvite(match![0])!.sessionName).toBe('mhmd')
+    expect(store.peekInvite(match![0])!.role).toBe('user')
+  })
+
+  test('owner /invite <session> admin mints an admin invite', async () => {
+    r.handleWebhook(update('owner-1', '/invite mhmd admin'))
+    await new Promise(r => setTimeout(r, 5))
+    const replies = sender.calls.filter(c => c.method === 'sendMessage')
+    expect(replies.length).toBe(1)
+    const text = (replies[0]!.body as any).text as string
+    const match = text.match(/[A-Z0-9]{6}/)
+    expect(match).not.toBeNull()
+    expect(store.peekInvite(match![0])).toMatchObject({ sessionName: 'mhmd', role: 'admin' })
+    expect(text.toLowerCase()).toContain('admin')
+  })
+
+  test('owner /invite rejects unknown roles', async () => {
+    r.handleWebhook(update('owner-1', '/invite mhmd root'))
+    await new Promise(r => setTimeout(r, 5))
+    const replies = sender.calls.filter(c => c.method === 'sendMessage')
+    expect(replies.length).toBe(1)
+    expect((replies[0]!.body as any).text.toLowerCase()).toContain('usage')
+    expect(store.listPendingInvites()).toEqual([])
   })
 
   test('owner /invite <unknown-session> rejects (no code minted)', async () => {
@@ -2838,6 +2860,18 @@ describe('RubikaFrontend /invite, /unpin, claim flow', () => {
     expect(router.calls.length).toBe(1)
     expect(router.calls[0]!.sessionName).toBe('mhmd')
     expect(router.calls[0]!.text).toBe('hello there')
+  })
+
+  test('admin invite claimant can run owner commands', async () => {
+    const code = store.mintInvite('mhmd', undefined, 'admin')
+    r.handleWebhook(update('admin-2', code))
+    sender.calls = []
+    r.handleWebhook(update('admin-2', '/list'))
+    await new Promise(r => setTimeout(r, 5))
+    const replies = sender.calls.filter(c => c.method === 'sendMessage')
+    expect(replies.length).toBe(1)
+    expect((replies[0]!.body as any).text).toContain('mhmd')
+    expect(router.calls.length).toBe(0)
   })
 
   test('claimed code is consumed — second sender with the same code is rejected', async () => {

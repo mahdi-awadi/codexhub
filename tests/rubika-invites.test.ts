@@ -36,7 +36,7 @@ describe('RubikaInviteStore.mintInvite', () => {
       const path = join(dir, 'rubika-invites.json')
       expect(existsSync(path)).toBe(true)
       const json = JSON.parse(readFileSync(path, 'utf8'))
-      expect(json.pendingInvites[code]).toMatchObject({ sessionName: 'mhmd' })
+      expect(json.pendingInvites[code]).toMatchObject({ sessionName: 'mhmd', role: 'user' })
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 
@@ -50,6 +50,14 @@ describe('RubikaInviteStore.mintInvite', () => {
       expect(inv!.expiresAt).toBe(fixedNow + 24 * 60 * 60 * 1000)
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
+
+  test('can mint an admin invite', () => {
+    const { store, dir } = makeStore()
+    try {
+      const code = store.mintInvite('mhmd', undefined, 'admin')
+      expect(store.peekInvite(code)).toMatchObject({ sessionName: 'mhmd', role: 'admin' })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
 })
 
 describe('RubikaInviteStore.claim', () => {
@@ -60,6 +68,16 @@ describe('RubikaInviteStore.claim', () => {
       const sessionName = store.claim(code, 'guest-9')
       expect(sessionName).toBe('mhmd')
       expect(store.getPin('guest-9')).toBe('mhmd')
+      expect(store.getPinInfo('guest-9')).toMatchObject({ sessionName: 'mhmd', role: 'user' })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  test('admin code pins the sender as admin', () => {
+    const { store, dir } = makeStore()
+    try {
+      const code = store.mintInvite('mhmd', undefined, 'admin')
+      expect(store.claim(code, 'admin-9')).toBe('mhmd')
+      expect(store.getPinInfo('admin-9')).toMatchObject({ sessionName: 'mhmd', role: 'admin' })
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 
@@ -106,7 +124,7 @@ describe('RubikaInviteStore.claim', () => {
       store.claim(code, 'guest-9')
       const path = join(dir, 'rubika-invites.json')
       const json = JSON.parse(readFileSync(path, 'utf8'))
-      expect(json.pins['guest-9']).toMatchObject({ sessionName: 'mhmd' })
+      expect(json.pins['guest-9']).toMatchObject({ sessionName: 'mhmd', role: 'user' })
       // Invite removed after claim.
       expect(json.pendingInvites[code]).toBeUndefined()
     } finally { rmSync(dir, { recursive: true, force: true }) }
@@ -154,6 +172,18 @@ describe('RubikaInviteStore persistence', () => {
       s1.claim(code, 'guest-9')
       const s2 = new RubikaInviteStore({ dir })
       expect(s2.getPin('guest-9')).toBe('mhmd')
+      expect(s2.getPinInfo('guest-9')).toMatchObject({ sessionName: 'mhmd', role: 'user' })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  test('reloads admin pins after restart', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'invite-reload-admin-pin-'))
+    try {
+      const s1 = new RubikaInviteStore({ dir })
+      const code = s1.mintInvite('mhmd', undefined, 'admin')
+      s1.claim(code, 'admin-9')
+      const s2 = new RubikaInviteStore({ dir })
+      expect(s2.getPinInfo('admin-9')).toMatchObject({ sessionName: 'mhmd', role: 'admin' })
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 

@@ -576,8 +576,9 @@ export class RubikaFrontend {
     const m = inner.new_message
     if (m.sender_type !== 'User') return
     const senderId = m.sender_id
-    const isOwner = this.deps.allowFrom.includes(senderId)
-    let guestSession = this.inviteStore?.getPin(senderId) ?? null
+    const pinInfo = this.inviteStore?.getPinInfo(senderId) ?? null
+    const isOwner = this.deps.allowFrom.includes(senderId) || pinInfo?.role === 'admin'
+    const guestSession = pinInfo?.role === 'user' ? pinInfo.sessionName : null
 
     // Invite-code claim path. A non-owner, non-pinned sender whose entire
     // text is a 6-char invite code gets bound to the matching session here,
@@ -719,11 +720,12 @@ export class RubikaFrontend {
     const im = body?.inline_message
     if (!im || !im.aux_data?.button_id) return
     const senderId = im.sender_id
-    if (this.inviteStore?.getPin(senderId)) {
+    const pinInfo = this.inviteStore?.getPinInfo(senderId) ?? null
+    if (pinInfo?.role === 'user') {
       process.stderr.write(`rubika: inline dropping guest tap from ${senderId}\n`)
       return
     }
-    if (!this.deps.allowFrom.includes(senderId)) {
+    if (!this.deps.allowFrom.includes(senderId) && pinInfo?.role !== 'admin') {
       process.stderr.write(`rubika: inline rejecting non-allowed sender ${senderId}\n`)
       return
     }
@@ -888,16 +890,22 @@ export class RubikaFrontend {
     }
     const sessionName = (args[0] ?? '').trim()
     if (!sessionName) {
-      await this.replyTo(senderId, chatId, 'Usage: /invite <session-name>')
+      await this.replyTo(senderId, chatId, 'Usage: /invite <session-name> [user|admin]')
+      return
+    }
+    const roleArg = (args[1] ?? 'user').trim().toLowerCase()
+    if (roleArg !== 'user' && roleArg !== 'admin') {
+      await this.replyTo(senderId, chatId, 'Usage: /invite <session-name> [user|admin]')
       return
     }
     if (!this.deps.registry.findByName(sessionName)) {
       await this.replyTo(senderId, chatId, `Session "${sessionName}" not found.`)
       return
     }
-    const code = this.inviteStore.mintInvite(sessionName)
+    const code = this.inviteStore.mintInvite(sessionName, undefined, roleArg)
+    const roleLabel = roleArg === 'admin' ? ' admin' : ''
     await this.replyTo(senderId, chatId,
-      `🎟 Invite for ${sessionName}: ${code}\n` +
+      `🎟${roleLabel} Invite for ${sessionName}: ${code}\n` +
       `Share this code with the user. They text it to the bot to claim. Single-use, expires in 24h.`)
   }
 
